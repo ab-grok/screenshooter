@@ -26,10 +26,10 @@ async function createCookie(token32: string) {
   });
 }
 
-export async function logUser(password: string) {
+export async function logUser(pass: string, user: string) {
   try {
     const token32 = await createToken32();
-    const { error } = await createSession(password, token32);
+    const { error } = await createSession(token32, pass, user);
     if (!error) await createCookie(token32);
     return { error };
   } catch (e) {

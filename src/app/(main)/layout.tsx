@@ -10,14 +10,13 @@ export default async function MainLayout({
   children: React.ReactNode;
 }) {
   const { error } = await validateSession();
-  if (error) redirect("/login?unkown_user=true");
+  if (error) redirect("/login?user=unknown");
   return (
-    <div className="relative">
+    <div className="relative flex h-full w-full">
       <RootLayoutContext>
         <ErrDialog />
         {children}
       </RootLayoutContext>
-      ;
     </div>
   );
 }

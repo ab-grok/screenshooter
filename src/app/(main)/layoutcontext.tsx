@@ -29,6 +29,9 @@ export function RootLayoutContext({
   const [errLog, setErrLog] = useState({} as errLog);
 
   return (
-    <RootContext.Provider value={{ errLog, setErrLog }}></RootContext.Provider>
+    <RootContext.Provider value={{ errLog, setErrLog }}>
+      {" "}
+      {children}
+    </RootContext.Provider>
   );
 }

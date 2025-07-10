@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-require("dotenv").config();
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -17,7 +16,7 @@ export const metadata: Metadata = {
   title: "ScreenShooter",
   description: "Takes screenshots",
   icons: {
-    icon: "/public/shooterlogo.png",
+    icon: "/shooterlogo1.png",
   },
 };
 

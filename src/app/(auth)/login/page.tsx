@@ -20,11 +20,21 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export default function Login() {
+  type logInput = "u" | "p" | "";
   const formItems = ["username", "password"];
-  const textChanging = useRef(false);
-  const [inputCount, setInputCount] = useState(0);
-  const [buttonAnim, setButtonAnim] = useState(false);
   const [dialog, setDialog] = useState({ msg: "", danger: false });
+  const textChangeTimer = useRef<NodeJS.Timeout | null>(null);
+  const [buttonAnim, setButtonAnim] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const passRef = useRef<HTMLInputElement | null>(null); // can use oneRef, better optimization.
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const inputOffset = useRef({ user: 0, pass: 0 });
+  const [currInput, setCurrInput] = useState({
+    count: 0,
+    name: "" as logInput,
+  });
+  const initRender = useRef(true);
   // const changeTimer = useRef<NodeJS.Timeout | undefined>(undefined);
   // const [textChange, setTextChange] = useState({uname: false, pass: false})
 
@@ -34,27 +44,50 @@ export default function Login() {
   });
 
   async function logSubmitted(values: logType) {
-    const { error } = await logUser(values.password);
+    setLoading(true);
+    const { error } = await logUser(values.password, values.username);
+    setLoading(false);
     setDialog({ msg: error || "Successful!", danger: error ? true : false });
   }
 
   useEffect(() => {
-    if (logForm.getValues("username") || logForm.getValues("password")) {
-      if (!textChanging.current) {
-        textChanging.current = true;
-        setTimeout(() => {
-          textChanging.current = false;
-        }, 3000);
-      } else {
-      }
+    //separate into user and pass effects -- better optimized.
+    if (initRender.current) {
+      canvasRef.current = document.createElement("canvas");
+      initRender.current = false;
+      return;
     }
-  }, [inputCount]);
+    // if (currInput.count < 5) return;
+    // console.log("timer effect ran");
+    if (textChangeTimer.current) clearTimeout(textChangeTimer.current); //setChangingText clears the prev val -- no need to handle different timeouts
+    textChangeTimer.current = setTimeout(() => {
+      console.log("timer executed");
+      setCurrInput((p) => ({ name: "", count: p.count }));
+    }, 3000);
+    return () => {
+      textChangeTimer.current && clearTimeout(textChangeTimer.current);
+    };
+  }, [currInput.count]);
 
   function inputChanged(e: ChangeEvent<HTMLInputElement>) {
     const name = e.target.name as "username" | "password";
     console.log("name from inputChanged: ", name);
-    logForm.setValue(name, e.currentTarget.value);
-    setInputCount((p) => p + 1);
+    logForm.setValue(name, e.target.value || "");
+    setCurrInput((p) => ({
+      name: name == "username" ? "u" : "p",
+      count: e.target.value.length ?? 0,
+    }));
+    measureText(e.target);
+  }
+
+  function measureText(I: HTMLInputElement) {
+    //measures just pass text
+    if (canvasRef.current && I.value && I.value.length! > 5) {
+      const context = canvasRef.current.getContext("2d")!;
+      context.font = getComputedStyle(I).font || "16px san-serif";
+      const metrics = context.measureText(I.value);
+      inputOffset.current.pass = metrics.width + 8;
+    }
   }
 
   function buttonPressed() {
@@ -70,9 +103,9 @@ export default function Login() {
       <Form {...logForm}>
         <form
           onSubmit={logForm.handleSubmit(logSubmitted)}
-          className=" flex text-white/80 flex-col space-y-[1rem] "
+          className=" flex overflow-hidden p-2 text-white/80 flex-col space-y-[1rem] "
         >
-          <section className=" font-semibold select-none pointer-coarse: text-center p-2 w-full h-[3rem] text-4xl ">
+          <section className="font-semibold select-none text-center w-full h-[3rem] text-4xl ">
             Enter into club
             <Separator className="bg-neutral-500" />
           </section>
@@ -88,12 +121,26 @@ export default function Login() {
                       {a.charAt(0).toUpperCase() + a.slice(1, a.length)}
                     </FormLabel>
                     <FormControl>
-                      <Input
-                        {...field}
-                        onInput={inputChanged}
-                        className="rounded-full h-[3rem] shadow-md focus:shadow-none ring-white"
-                        placeholder=""
-                      />
+                      <div className="flex relative">
+                        <Input
+                          {...field}
+                          ref={a == "password" ? passRef : nameRef}
+                          onInput={inputChanged}
+                          className="rounded-full h-[3rem] overflow-hidden shadow-md focus:shadow-none ring-white"
+                          placeholder=""
+                        />
+                        <span
+                          className={cn(
+                            `absolute top-[25%] text-stone-500 font-bold p-1 h-1/2 items-center truncate rounded-full bg-white/20 hidden`,
+                            a == "password" && currInput?.name == "p"
+                              ? "flex"
+                              : "hidden"
+                          )}
+                          style={{ left: `${inputOffset.current.pass + 8}px` }}
+                        >
+                          Trying to hack the system I see...
+                        </span>
+                      </div>
                     </FormControl>
                     <FormMessage className="font-bold" />
                   </FormItem>
@@ -104,13 +151,20 @@ export default function Login() {
           <Button
             onClick={() => buttonPressed()}
             type="submit"
+            disabled={loading}
             className={cn(
-              " transition-all select-none hover:bg-green-600/60 cursor-pointer min-h-[4rem] shadow-md rounded-full hover:-translate-y-0.5",
+              " transition-all select-none hover:bg-green-600/60 cursor-pointer min-h-[4rem] overflow-hidden shadow-md rounded-full hover:-translate-y-0.5",
               buttonAnim && "scale-[99.5%] hover:translate-y-0.5 shadow-none"
             )}
           >
-            {" "}
-            Sign in{" "}
+            <span
+              className={cn(
+                loading &&
+                  "scale-x-[300] scale-y-200 transition-all duration-[20s]"
+              )}
+            >
+              {!loading ? "Sign in" : "..."}
+            </span>
           </Button>
         </form>
       </Form>

@@ -17,8 +17,8 @@ export default function Main() {
         hello{" "}
       </header>
       {/* <Separator orientation="horizontal" /> */}
-      <main className="p-2">
-        <section className="w-1/2 h-[20rem] p-2 overflow-auto bg-teal-600 ring-2 shadow-sm"></section>
+      <main className="p-2 bg-black">
+        <section className=" h-[20rem] p-2 overflow-auto bg-teal-600 ring-2 shadow-sm flex-1 "></section>
       </main>
     </div>
   );
