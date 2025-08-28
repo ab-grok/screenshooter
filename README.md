@@ -1,3 +1,3 @@
 ## `Name`: ScreenShooter
 
-## `Description`: Takes screenshots for you while you do other things 👌 :blue_heart:
+## `Description`: Takes screenshots of webpages for you while you do other things 👌 :blue_heart:
