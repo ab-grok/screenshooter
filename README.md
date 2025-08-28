@@ -1,3 +1,3 @@
-# Nothing to see here.
+# ScreenShooter
 
-## It just opens a webpage and takes screenshots
+## Opens a webpage. Takes screenshots.

@@ -7,10 +7,22 @@ import {
   useState,
 } from "react";
 
-type errLog = { msg: string; danger: boolean };
+type shotFields = "cHtml" | "cShot" | "eHtml" | "eShot";
+
+export type shot = Record<shotFields, string | file>;
+export type multiShots = Record<number, shot[]>;
+export type file = {
+  fileName: string;
+  fileData: string;
+  fileType: string;
+};
+
+type errBox = { msg: string; danger: boolean };
 type rootContextType = {
-  errLog: errLog;
-  setErrLog: Dispatch<SetStateAction<errLog>>;
+  errBox: errBox;
+  setErrBox: Dispatch<SetStateAction<errBox>>;
+  shots: multiShots;
+  setShots: Dispatch<SetStateAction<multiShots>>;
 };
 
 const RootContext = createContext({} as rootContextType);
@@ -26,10 +38,11 @@ type RootLayoutType = {
 export function RootLayoutContext({
   children,
 }: React.PropsWithChildren<RootLayoutType>) {
-  const [errLog, setErrLog] = useState({} as errLog);
+  const [errBox, setErrBox] = useState({} as errBox);
+  const [shots, setShots] = useState({} as multiShots);
 
   return (
-    <RootContext.Provider value={{ errLog, setErrLog }}>
+    <RootContext.Provider value={{ errBox, setErrBox, shots, setShots }}>
       {" "}
       {children}
     </RootContext.Provider>

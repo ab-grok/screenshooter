@@ -1,0 +1,8 @@
+// {
+//   "functions": {
+//     "src/lib/server.js": {
+//       "maxDuration": 59,
+//       "region": "us-east-1"
+//     }
+//   }
+// }

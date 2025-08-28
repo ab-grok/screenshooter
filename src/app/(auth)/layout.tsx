@@ -6,8 +6,8 @@ export default async function AuthLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { error } = await validateSession();
-  if (!error) redirect("/");
+  const res = await fetch(process.env.PUBLIC_NEXT_WRK + "/validateSession");
+  if (res.ok && !(await res.json()).error) redirect("/");
 
   return (
     <div className="w-screen h-screen relative flex-col bg-black/90 items-center justify-center flex">

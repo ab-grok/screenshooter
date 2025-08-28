@@ -1,13 +1,36 @@
 "use client";
 import { Separator } from "@/components/ui/separator";
-import { makeEntry } from "@/lib/server";
+import { useEffect, useState } from "react";
+import { shot, useRootContext } from "./layoutcontext";
 
 export default function Main() {
-  async function addEntry() {
-    const date = new Date();
-    const name = "shot-" + date.toLocaleString();
-    const buffer = 123;
-    // const {error} = await makeEntry(buffer)
+  const { setErrBox } = useRootContext();
+  const [cShots, setCShots] = useState([] as shot[]);
+  const [eShots, setEShots] = useState([] as shot[]);
+
+  useEffect(() => {
+    setInterval(() => {
+      fetchShots();
+    }, 1000 * 60 * 5); // 5 minutes interval
+  }, []);
+
+  function fetchShots() {
+    //{cHtml: string, cShots: file}[]
+    const res = fetch(`${process.env.NEXT_PUBLIC_WKR}/getShots`, {
+      headers: {
+        AuthToken: process.env.NEXT_PUBLIC_AUTH || "",
+      },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) {
+          setErrBox({ msg: data.error, danger: true });
+          return;
+        }
+
+        setCShots(data.cs);
+        setEShots(data.es);
+      });
   }
 
   return (
@@ -17,7 +40,7 @@ export default function Main() {
         hello{" "}
       </header>
       {/* <Separator orientation="horizontal" /> */}
-      <main className="p-2 bg-black">
+      <main className="p-2 bg-slate-700 h-full w-full ">
         <section className=" h-[20rem] p-2 overflow-auto bg-teal-600 ring-2 shadow-sm flex-1 "></section>
       </main>
     </div>
