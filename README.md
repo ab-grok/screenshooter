@@ -1,3 +1,7 @@
-# ScreenShooter
+# Name:
 
-## Opens a webpage. Takes screenshots.
+## ScreenShooter
+
+# Description:
+
+## Takes screenshots for you so you can do other things 👌.
