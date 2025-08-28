@@ -1,7 +1,3 @@
-# Name:
+# Name: ### ScreenShooter
 
-## ScreenShooter
-
-# Description:
-
-## Takes screenshots for you so you can do other things 👌.
+# Description: ### Takes screenshots for you so you can do other things 👌.
