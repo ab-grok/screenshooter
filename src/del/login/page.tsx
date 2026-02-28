@@ -14,7 +14,7 @@ import z from "zod";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { ErrDialog } from "@/components/errordialog";
+import { ErrDialog } from "@/components/Errordialog";
 import { logUser } from "@/lib/sessions";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -134,7 +134,7 @@ export default function Login() {
                             `absolute top-[25%] text-stone-500 font-bold p-1 h-1/2 items-center truncate rounded-full bg-white/20 hidden`,
                             a == "password" && currInput?.name == "p"
                               ? "flex"
-                              : "hidden"
+                              : "hidden",
                           )}
                           style={{ left: `${inputOffset.current.pass + 8}px` }}
                         >
@@ -154,13 +154,13 @@ export default function Login() {
             disabled={loading}
             className={cn(
               " transition-all select-none hover:bg-green-600/60 cursor-pointer min-h-[4rem] overflow-hidden shadow-md rounded-full hover:-translate-y-0.5",
-              buttonAnim && "scale-[99.5%] hover:translate-y-0.5 shadow-none"
+              buttonAnim && "scale-[99.5%] hover:translate-y-0.5 shadow-none",
             )}
           >
             <span
               className={cn(
                 loading &&
-                  "scale-x-[300] scale-y-200 transition-all duration-[20s]"
+                  "scale-x-[300] scale-y-200 transition-all duration-[20s]",
               )}
             >
               {!loading ? "Sign in" : "..."}

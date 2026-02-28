@@ -1,0 +1,27 @@
+//src/app/api/getCronSites/route.ts
+
+import { NextResponse } from "next/server";
+import * as jose from "jose";
+import { getCronSites, setNotification } from "@/lib/server";
+import { json } from "stream/consumers";
+
+export async function GET(req: Request) {
+  try {
+    const token = req.headers.get("Authorization")!;
+    const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+
+    const { payload } = await jose.jwtVerify(token, secret);
+    const { cron } = payload;
+
+    const { error: e, readySites, id } = await getCronSites(cron);
+    if (e) throw { error: e };
+
+    return NextResponse.json({ readySites, id });
+  } catch (e) {
+    console.error("Error in api: ", e);
+    const msg = `Could not get readySites. ${JSON.stringify(e)}`;
+    const msgData = { msg, danger: true };
+    await setNotification({ msgData, postAdmin: true });
+    return NextResponse.json({ error: "An error occured" }, { status: 401 });
+  }
+}

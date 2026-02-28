@@ -1,8 +1,8 @@
 "use client";
-import { validateSession } from "@/lib/server";
-import { redirect } from "next/navigation";
-import { RootLayoutContext } from "./layoutcontext";
-import { ErrDialog } from "@/components/errordialog";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RootLayoutContext } from "./rootcontext";
+import { ErrDialog } from "@/components/Errordialog";
+const queryClient = new QueryClient();
 
 // // Client-side (not Worker)
 // import FingerprintJS from '@fingerprintjs/fingerprintjs';
@@ -16,21 +16,14 @@ export default async function MainLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_WKR}/validateSession`, {
-    headers: {
-      AuthToken: process.env.NEXT_PUBLIC_AUTH || "",
-    },
-  });
-
-  const { error } = await res.json();
-  if (error || !res.ok) redirect("/login?user=unknown");
-
   return (
     <div className="relative flex h-full w-full">
-      <RootLayoutContext>
-        <ErrDialog />
-        {children}
-      </RootLayoutContext>
+      <QueryClientProvider client={queryClient}>
+        <RootLayoutContext>
+          <ErrDialog />
+          {children}
+        </RootLayoutContext>
+      </QueryClientProvider>
     </div>
   );
 }

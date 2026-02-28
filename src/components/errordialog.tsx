@@ -1,6 +1,6 @@
 "use client";
 
-import { useRootContext } from "@/app/(main)/layoutcontext";
+import { useRootContext } from "@/app/(main)/rootcontext";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
@@ -15,7 +15,7 @@ export function ErrDialog({ msg, danger }: { msg?: string; danger?: boolean }) {
       " dangerProp: ",
       danger,
       " errBox: ",
-      JSON.stringify(errBox)
+      JSON.stringify(errBox),
     );
     if (msg || errBox?.msg) {
       setAnim({ a: true, b: false });
@@ -40,13 +40,13 @@ export function ErrDialog({ msg, danger }: { msg?: string; danger?: boolean }) {
       className={cn(
         "absolute top-3 z-5 w-1/2 sm:left-1/4 left-1/10 min-w-[16rem] sm:min-w-[20rem] rounded-3xl ring-2 shadow-lg shadow-black bg-black/70 text-white/80 font-semibold flex items-center justify-center p-1",
         anim.a ? "flex" : "hidden",
-        danger || errBox?.danger ? "ring-red-600" : "ring-green-600"
+        danger || errBox?.danger ? "ring-red-600" : "ring-green-600",
       )}
     >
       <div
         className={cn(
           "overflow-hidden rounded-xl bg-neutral-800/20 flex items-center ",
-          anim.b ? "h-[5rem]" : "max-h-0.5"
+          anim.b ? "h-[5rem]" : "max-h-0.5",
         )}
       >
         {errBox?.msg || ""}

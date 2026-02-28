@@ -14,9 +14,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "ScreenShooter",
-  description: "Takes screenshots",
+  description: "Takes screenshots of website pages",
   icons: {
-    icon: "/shooterlogo1.png",
+    icon: "/screenshooter.png",
+    apple: "/screenshooter.png",
   },
 };
 

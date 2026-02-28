@@ -7,22 +7,12 @@ import {
   useState,
 } from "react";
 
-type shotFields = "cHtml" | "cShot" | "eHtml" | "eShot";
-
-export type shot = Record<shotFields, string | file>;
-export type multiShots = Record<number, shot[]>;
-export type file = {
-  fileName: string;
-  fileData: string;
-  fileType: string;
-};
+// Each component can render a site having it's own state, no need for general storage in context
 
 type errBox = { msg: string; danger: boolean };
 type rootContextType = {
   errBox: errBox;
   setErrBox: Dispatch<SetStateAction<errBox>>;
-  shots: multiShots;
-  setShots: Dispatch<SetStateAction<multiShots>>;
 };
 
 const RootContext = createContext({} as rootContextType);
@@ -39,10 +29,9 @@ export function RootLayoutContext({
   children,
 }: React.PropsWithChildren<RootLayoutType>) {
   const [errBox, setErrBox] = useState({} as errBox);
-  const [shots, setShots] = useState({} as multiShots);
 
   return (
-    <RootContext.Provider value={{ errBox, setErrBox, shots, setShots }}>
+    <RootContext.Provider value={{ errBox, setErrBox }}>
       {" "}
       {children}
     </RootContext.Provider>
