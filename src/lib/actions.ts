@@ -321,7 +321,7 @@ export async function getShots(prop: shotProp) {
 
 export async function getDbShots(props: downloadProps) {
   //using just site & unviewed -- can handle incremental downloads with next & id
-  const { unviewed, site, id, next } = props;
+  const { site, id, next } = props;
 
   const { user, error: e1 } = await validateSession();
 

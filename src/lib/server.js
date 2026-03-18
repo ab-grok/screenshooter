@@ -41,42 +41,40 @@ export async function makeEntry({ shotData }) {
     const sS = safeSite(site, "noDots");
     const u = db(user);
 
-    if (!sS) {
-      console.error("in makeEntry site unsafe: ", site, " user: ", user);
-    } else {
-      const fileName = sS + "_" + dateStr;
-      const fileType = "image/jpeg";
-      const fileData = shot;
-      const shotCol = db(sS + "_shot");
-      const htmlCol = db(sS + "_html");
+    if (!sS) throw ("in makeEntry site unsafe: ", site, " user: ", user); //how do you catch this?
 
-      //columns should exist - created in updateShotSchema
-      const htmlData = { html, range };
-      const prevId = await entryExists({ htmlData, user });
-      const updHtml = prevId ? prevId : html;
+    const fileName = sS + "_" + dateStr;
+    const fileType = "image/jpeg";
+    const fileData = shot;
+    const shotCol = db(sS + "_shot");
+    const htmlCol = db(sS + "_html");
 
-      const shotData = prevId
-        ? { fileName, fileData: prevId, fileType: "plain/text" }
-        : { fileName, fileData, fileType };
+    //columns should exist - created in updateShotSchema
+    const htmlData = { html, range };
+    const prevId = await entryExists({ htmlData, user });
+    const updHtml = prevId ? prevId : html;
 
-      const r1 =
-        await db`insert into "public".${u} (${shotCol}, ${htmlCol}) values (${shotData}, ${updHtml}) returning id`;
+    const shotData = prevId
+      ? { fileName, fileData: prevId, fileType: "plain/text" }
+      : { fileName, fileData, fileType };
 
-      if (r1?.[0].id) {
-        //remove "failed attempt" notification -- set when retrieving the sites
-        const msgData = { id };
-        const noti = { msgData, user, del: true };
-        const { error } = await setNotification({ ...noti });
-        if (error) throw { error };
-      }
-    }
+    const r1 =
+      await db`insert into "public".${u} (${shotCol}, ${htmlCol}) values (${shotData}, ${updHtml}) returning id`;
+
+    if (!r1?.[0].id) throw { error: "in makeEntry. insert failed!" };
+
+    //remove "failed attempt" notification -- that's set when retrieving the sites
+    const noti = { msgData: { id }, user, del: true };
+    const { error } = await setNotification({ ...noti });
+    if (error) throw { error };
+
     return { error: null };
   } catch (e) {
     console.error(`Error in makeEntry: `, e);
 
-    const msgData = { msg: JSON.stringify(e), danger: true };
-    const noti = { msgData, user };
-    await setNotification({ ...noti });
+    const msgData = { msg: JSON.stringify(e) };
+    const noti = { msgData, logError: true };
+    setNotification(noti);
     return { error: "Error in makeEntry" };
   }
 }
@@ -86,17 +84,13 @@ async function entryExists({ htmlData, user }) {
     //checks if the selected part of a new shot matches a previous entry.
     //start e: 1477865/1609938, c: 1664160/1663495 -- end e: 1693003 / 1820704  c: 1868906 / 1922007 / 1894144
     if (!db) throw { error: "Db uninitialised!" };
-
     const { html, range } = htmlData;
+    if (!safeRange(range)) throw { error: "unsafe range" };
     if (!html) throw { error: `Missing parameters` };
 
-    let partHtml = html;
-    if (safeRange(range)) {
-      const { start, end } = range;
-      partHtml = html.slice(start, end);
-    }
+    const { start, end } = range;
+    const partHtml = db`%${html.slice(start || 0, end)}%`;
 
-    partHtml = db`%${partHtml}%`;
     const u = db(user);
 
     const r1 =
@@ -139,71 +133,107 @@ export async function delPrevEntry({ cron, site, user }) {
 
 export async function getCronSites(cron) {
   //called from worker -- gets readySites (readyUsers), runs cleanup for crons whose users lastLog > 3mos.
-  //currently Checking for if it gets userSites that I can check (in updateUserSites) for active prop and validate maxCrons.
+  //rmv: currently Checking for if it gets userSites that I can check (in updateUserSites) for active prop and validate maxCrons.
   try {
     if (!db) throw { error: "Db uninitialised" };
 
     const readySites = [];
+    let errLogs = [];
+    let userInactiveDate = new Date();
+    userInactiveDate.setMonth(userInactiveDate.getMonth() - 3);
 
     const r1 =
       await db`select "cronData" as "cD" from "private"."crons" where cron = ${cron}`;
     const r1a = r1[0]?.cD;
 
     if (!r1a || (r1a.length == 1 && !r1a[0])) {
-      const e1 = "in getCronSites. Cron not found. Running cleanup...";
-      console.error({ error: e1 });
+      //Log empty cron and del
+      const msg = `in getCronSites. Cron not found. Running cleanup! Cron: ${cron}`;
+      const eLog = { msgData: { msg }, logError: true };
+      setNotification(eLog);
+      console.error(msg);
 
       await db`delete from "private"."crons" where cron = ${cron}`;
 
-      const updW = { user: "cleanUp", cron, del: true };
-      const { error } = await updateWorker({ ...updW });
+      const updW = { user: "clean", cron, del: true };
+      const { error } = await updateWorker(updW);
       if (error) throw { error };
 
       console.log("in getCronSites. Cron cleaned!");
       return { error: null };
     }
 
-    for (const { site, range, user } of r1a) {
-      let staleTime = new Date();
-      staleTime.setMonth(staleTime.getMonth() - 3);
+    for (const [{ site, range, user }, i] of r1a) {
+      //I reckon i provides the current index?
+      let isError;
 
-      //for lastLog you must not delete session record when logging out -- simply set sessionId = null
+      //for lastLog sessionId should be set to null and not deleted when logging out;
       const r2 =
         await db`select s."lastLog" from "private"."users" inner join "private"."sessions" s on uuid = s.uuid where username = ${user} `;
       const lastLog = r2[0]?.lastLog;
 
-      console.log("in getCronSites. lastLog: ", lastLog);
+      console.log("in getCronSites. user: ", user, "lastLog: ", lastLog);
 
-      if (staleTime > lastLog || !lastLog) {
+      if (userInactiveDate > new Date(lastLog) || !lastLog) {
         const msg =
           "In getCronSites. User unlogged past 3 months. Removing cron and prevEntries";
+        setNotification({ msgData: { msg }, logError: true });
         console.log(msg, `lastLog: ${lastLog}`);
 
         const safeSD = { site, cron, range };
         const updCron = { safeSD, user, del: true };
 
-        const { error: e1 } = await delPrevEntry({ cron, site, user });
+        const { error: sitesErr } = await setSiteInactive({ site, cron, user });
+        //delete cron data from cron table -- cron needs to be reset on setSiteActive
+        const { delWorker, error: cronErr } = await updateCronTable(updCron);
 
-        const { error: e2 } = await setSiteInactive({ site, cron, user });
-        const { delWorker, error: e3 } = await updateCronTable({ ...updCron });
+        let delWorkerErr;
 
         if (delWorker) {
-          const { error: e4 } = await updateWorker({ ...updCron });
-          if (e1 || e2 || e3 || e4) throw { error: e1, ...{ e2, e3, e4 } };
+          const { error: e1 } = await updateWorker({ ...updCron });
+          delWorkerErr = e1;
         }
-        continue;
+
+        if (sitesErr || cronErr || delWorkerErr) {
+          isError = true;
+          const error = { sitesErr, cronErr, delWorkerErr };
+          errLogs.push({ user, cron, error }); //this pushes each arg as array entry -- correct?
+        }
       }
+
+      //remove previous shots (greater than one day) to free up db space.
+      const { error: delPrevErr } = await delPrevEntry({ cron, site, user });
+      if (delPrevErr) {
+        //mutate errorLogs to include delPrevErr;
+        isError = true;
+        const thisLog = errLogs.find((e) => (e?.user = user)) || { user, cron };
+        errLogs = [
+          ...errLogs.filter((e) => (e?.user = user)),
+          { ...thisLog, error: { ...thisLog.error, delPrevErr } },
+        ];
+      }
+
+      if (isError) continue; //Skip rest of code on error
       readySites.push({ user, site, range });
     }
-    //Accounting for worker timeout scenario -- users get notified of attempt using same notification 'id', this is later removed on successful write.
-    const msg = `${cron} fired. But shot failed to save`;
+
+    //Accounting for worker timeout scenario -- users get notified of failed attempt using same 'id', this is later removed on successful write.
+    const msg = `Shot failed to save! Cron: ${cron} fired on ${formatDate(new Date())}.`;
     const user = readySites.map((s) => s.user);
     const msgData = { msg, danger: true };
     const { id } = await setNotification({ msgData, user });
 
+    //Log all per user error objects.
+    errLogs.forEach((e) => {
+      const msgData = { msg: JSON.stringify(e) };
+      setNotification({ msgData, logError: true });
+    });
+
     return { readySites, id };
   } catch (e) {
-    console.error("error in getCronSites! ", e);
+    console.error("error in getCronSites: ", e);
+    const eLog = { msgData: { msg: JSON.stringify(e) }, logError: true };
+    setNotification(eLog);
     return { error: e };
   }
 }
@@ -233,14 +263,14 @@ export async function getCronSites(cron) {
 export async function getUserShots(shotSet) {
   //gets usersite html and screenshot data
   //noMoreNext/Prev: returns true when the retrieved set is less than the limit.
-  // shotSet: indicates the current position and scroll direction for retrieving entries.
+  // id: indicates the current position; next: indicates fetch direction.
   try {
     const { site, id, next: n, user } = shotSet;
 
     const res =
       await db`select sites from "private"."users" where username = ${user} `;
 
-    if (!res?.[0]?.sites || res[0]?.sites?.length == 0)
+    if (!res[0]?.sites || res[0]?.sites?.length == 0)
       throw { error: "User has no sites" };
 
     const saferSite = safeSite(site, "noDots");
@@ -251,21 +281,30 @@ export async function getUserShots(shotSet) {
     let nextCursor, prevCursor, noMoreNext, noMorePrev;
 
     const thisSite = res[0].sites.find((s) => s.site == sS);
-    if (!thisSite) throw { error: `Site not found. shotSet.site: ${site}` };
+    if (!thisSite)
+      throw { error: `Site not found. site: ${site}, dbSite: ${sS} ` };
 
-    const clause = id ? db`id ${n ? db`>` : db`<`} ${id}` : db`viewed = false`;
+    //When no id is passed (at initial fetch) assign the last stored viewedId to id
+    if (!id) {
+      //does this correctly filter the jsonb[] for object of matching site and return only that?
+      const r1 =
+        await db`select ( select v from unnest("viewedId") as v where v ->> 'site' = ${sS} ) from "private"."users" where username = ${u} `;
+      id = r1?.[0]?.v?.viewedId || 1;
+    }
+
+    const clause = db`id ${n ? db`>` : db`<`} ${id}`;
 
     const shots =
       await db`select ${hC} as html, ${sC} as file, date, viewed, id from "public".${u} where html is not null and ${clause} order by id asc limit 20`;
 
-    if (shots[0]) {
-      const viewIds = shots.map((s) => s.id);
+    if (!shots[0]) throw { error: "No rows in user table! " };
 
-      nextCursor = viewIds.at(-1);
-      prevCursor = viewIds.at(0);
-      noMoreNext = next && viewIds.length < 20;
-      noMorePrev = !next && viewIds.length < 20;
-    } else throw { error: "No rows in user table! " };
+    const viewIds = shots.map((s) => s.id);
+
+    nextCursor = viewIds.at(-1);
+    prevCursor = viewIds.at(0);
+    noMoreNext = next && viewIds.length < 20;
+    noMorePrev = !next && viewIds.length < 20;
 
     return { nextCursor, prevCursor, noMoreNext, noMorePrev, shots };
   } catch (e) {
@@ -292,21 +331,26 @@ export async function getVisitorShots(shotSet) {
     const vtb = db(process.env.VTB);
     let nextCursor, prevCursor, noMoreNext, noMorePrev;
 
-    const clause = id
-      ? db`id ${next ? db`>` : db`<`} ${id}`
-      : db`viewed = false`;
+    //When no id is passed (at initial fetch) assign the last stored viewedId to id
+    //Make sure to insert viewedId on viewed fn -- and create db type -- v: {site, viewedId}
+    if (!id) {
+      const r1 =
+        await db`select ( select v from unnest("viewedId") as v where v ->> 'site' = ${sS} ) from "private"."users" where username = ${u} `;
+      id = r1?.[0]?.v?.viewedId || 1;
+    }
+
+    const clause = db`id ${next ? db`>` : db`<`} ${id}`;
 
     const shots =
       await db`select id, ${vShot} as file, ${vHtml} as html, date, viewed from "public".${vtb} where html is not null and ${clause} order by id asc limit 20 `;
 
-    if (shots[0]) {
-      const viewIds = shots.map((s) => s.id);
+    if (!shots[0]) throw { error: "Visitor table returned no rows!" };
+    const viewIds = shots.map((s) => s.id);
 
-      nextCursor = viewIds.at(-1);
-      prevCursor = viewIds.at(0);
-      noMoreNext = next && viewIds.length < 20;
-      noMorePrev = !next && viewIds.length < 20;
-    } else throw { error: "Visitor table returned no rows!" };
+    nextCursor = viewIds.at(-1);
+    prevCursor = viewIds.at(0);
+    noMoreNext = next && viewIds.length < 20;
+    noMorePrev = !next && viewIds.length < 20;
 
     return { nextCursor, prevCursor, noMoreNext, noMorePrev, shots };
   } catch (e) {
@@ -315,33 +359,27 @@ export async function getVisitorShots(shotSet) {
   }
 }
 
-//here I get shots from db -- each shot contains a jpeg of about 3MB I reckon (full screenshot of website), and corresponding HTML. So How many shots do you reckon I can pass in the server action before it breaks vercel free tier limits?
+//here I retrieve shots from db -- each shot contains a jpeg of about 3MB I reckon (full screenshot of website w puppeteer @ `jpeg: 80`), and corresponding HTML. So How many shots do you reckon I can get through this server action before it breaks vercel's free tier limit in size or compute?
 /**
- *
  * @param {{unviewed?: boolean; user?: string, site?: string, id?: number, next?:boolean}} params
  * @returns {Promise<{error?: string; downloadShots: Omit<shot, "viewed">[] }>}
  */
-export async function getDownloadShots({ site, user, unviewed, id, next }) {
-  //id would be used to get shots before or after id; Can set up incremental downloads for large batch (set limit);
-  //expects either unviewed or id to get shots.
+export async function getDownloadShots({ site, user, id, next }) {
+  //id! may be used as cursor for getting shots; Can set up as incremental downloads for large amounts (set limit);
 
   try {
-    const u = user && site ? true : false;
+    const u = user && site ? true : false; //check user is logged and has scheduled a shot
 
     const saferSite = safeSite(u ? site : process.env.VSITE, "noDots");
     const html_col = db(saferSite + "_html");
     const shot_col = db(saferSite + "_shot");
     const tb = db(u ? user : process.env.VTB);
 
-    const clause = unviewed
-      ? db`viewed = false`
-      : id
-        ? next
-          ? db`id > ${id}`
-          : db`id < ${id}`
-        : "";
-
-    if (!clause) throw { error: "missing params" };
+    const clause = id
+      ? next
+        ? db`id > ${id}`
+        : db`id < ${id}`
+      : db`viewed = false`;
 
     const downloadShots =
       await db`select id, ${shot_col} as file, ${html_col} as html, date from public.${tb} where html is not null and ${clause}`;
@@ -352,20 +390,21 @@ export async function getDownloadShots({ site, user, unviewed, id, next }) {
     };
   } catch (e) {
     console.error("In getDownloadShots: ", e);
-    return { error: "In getDownloadShots: ", e };
+    return { error: `In getDownloadShots: ${e.error || e.message}` };
   }
 }
 
 export async function deleteShot({ ids, user }) {
   //can send an array of shot IDs
   try {
-    ids = isArray(ids) ? ids : [ids];
+    !Array.isArray(ids) && (ids = [ids]);
     const u = db(user);
+
     const r1 = await db`delete from "public".${u} where id = any(${ids})`;
     return { error: null };
   } catch (e) {
     console.error("Error in deleteShot: ", e);
-    return { error: "Could not delete shot" };
+    return { error: `Could not delete shot: ${e.message}` };
   }
 }
 
@@ -376,9 +415,14 @@ export async function setShotViewed({ site, ids, user }) {
   try {
     if (!user || !site || !ids) throw { message: "Missing parameters" };
 
+    !Array.isArray(ids) && (ids = [ids]);
+    const sS = safeSite(site);
+
     const u = db(user);
     await db`update "private".${u} set viewed = true where site = ${site} and id = any(${ids})`;
 
+    //Store viewedId -- does this filter out the corresponding site's object and insert a new one as intended?
+    await db`update "private"."users" set "viewedId" = array_append((select v from unnest("viewedId") as v where v->> 'site' != ${sS}), jsonb_build_object('site', ${sS}, "viewedId", ${ids.at(-1)}) ) where user = ${u}`;
     return { error: null };
   } catch (e) {
     console.error("error in setEntryViewed: ", e);
@@ -388,7 +432,7 @@ export async function setShotViewed({ site, ids, user }) {
 
 export async function countUnviewedShots(user) {
   //unviewed: {site, count}
-  //Gets the number of unseen shots per site
+  //Gets the number of unopened shots per site
   try {
     const { tableName, userSites } = await getUserSites({ user });
     if (!userSites) throw { error: "User has no sites" };
@@ -401,7 +445,7 @@ export async function countUnviewedShots(user) {
             await db`select count(*) from "public".${u} where site = ${s.site} and viewed = false`;
           return { site: s.site, unvieweds: r1[0].count };
         } catch (e) {
-          console.error("Error in countUnviewedShots userSites map: ", e);
+          console.error("Error in countUnviewedShots > userSites.map: ", e);
           return { site: s.site, unvieweds: 0 };
         }
       }),
@@ -432,10 +476,11 @@ export async function updateShotSchema({ site, user, del }) {
       else
         await db`create table "public".${u} (id serial primary key, date timestamptz default now(), viewed boolean default false, ${htmlCol} text, ${shotCol} jsonb)`;
     } else {
+      const alterTb = db`alter table "public".${u}`;
       if (del)
-        await db`alter table "public".${u} drop column ${htmlCol}, drop column ${shotCol}`;
+        await db`${alterTb} drop column ${htmlCol}; ${alterTb} drop column ${shotCol}`;
       else
-        await db`alter table "public".${u} add column if not exists viewed boolean default false, add column if not exists ${htmlCol} text, add column if not exists ${shotCol} jsonb`;
+        await db`${alterTb} add column if not exists viewed boolean default false; ${alterTb} add column if not exists ${htmlCol} text; ${alterTb} add column if not exists ${shotCol} jsonb`;
     }
     return { user, saferSite, userSites };
   } catch (e) {
@@ -446,65 +491,51 @@ export async function updateShotSchema({ site, user, del }) {
 
 export async function updateUserSites({ safeSD, user, del, re }) {
   try {
-    //re: reactivate.
-    //Takes upd data: safeSD, merges with existing data: userSites, and updates "users" table.
-    //created getActiveSites() which checks that a new/re site is below the maxCrons limit and can be added.
+    //Merges safeSD with existing data if any: invalid safeSD props in upd/re used as del indicator (just range)
 
-    const { cron, site, range: sR } = safeSD;
+    const { cron, site, range } = safeSD;
 
     if (del) {
       await db`update "private"."users" set sites = array(select s from unnest(sites) as s where s ->> 'site' != ${site} ) where username = ${user}`;
       console.log(`in updateUserSites. {Site: ${site}, cron: ${cron}} removed`);
-    } else {
-      const { userSites } = await getUserSites({ user });
-      const { canAddSite, maxCrons, activeSites } = await getActiveSites(user);
-
-      if (userSites?.[0]) {
-        const tS = userSites.find((p) => p.site == site) || {};
-
-        if (!tS && !canAddSite) {
-          const content = { maxCrons, activeSites };
-          throw { message: "Unable to add new site to exising sites", content };
-        }
-
-        let updSite = {};
-
-        const { start: a, end: b } = tS?.range ?? {};
-        const rangeChange = sR && (sR?.end != b || sR?.start != a);
-
-        //will pass for updates, reactivation or new sites addition
-        if (cron != tS?.cron || rangeChange || re) {
-          updSite = {
-            site,
-            ...(cron != tS?.cron ? { cron } : {}),
-            ...(sR && (sR?.end != b || sR.start != a) ? { range: sR } : {}),
-            ...(canAddSite && (!tS || re) ? { active: true } : {}), //only set active:true when it's a new site or reactivating
-          };
-
-          //need to set active=true when:
-          //A: tS (site exists) -- nope (is update)
-          //B: !ts (new site) -- yes if canAddSite
-          //C: re (tS)  -- yes if canAddSite
-          updSite = { ...tS, ...updSite };
-          const sitesArr = [
-            ...userSites.filter((p) => p.site != site),
-            updSite,
-          ];
-
-          await db`update "private"."users" set sites = ${sitesArr}::jsonb[] where username = ${user}`;
-        } else {
-          const msg = "No change to existing cronData. Did not update.";
-          console.log("In updateUserSites: ", msg, { site, cron });
-        }
-      } else if (canAddCron) {
-        const updSite = { cron, site, range: sR, active: true };
-        await db`update "private"."users" set sites = array[${updSite}::jsonb] where username = ${user}`;
-      } else {
-        const content = { maxCrons, activeSites };
-        throw { message: "Unable to add new site ", content };
-      }
+      return { error: null };
     }
+
+    const { canAddSite, ...rest } = await getActiveSites(user);
+    const { userSites } = rest;
+
+    const tS = userSites?.find((s) => s.site == site);
+
+    if (tS?.active) {
+      console.log("Tried adding an active site");
+      return { error: null };
+    }
+
+    //can upd range in both re and upd so set safeRange regardless
+    let sR = safeRange(range);
+
+    const newR = sR?.start != range?.start && sR?.end != range.end; //there's invalid sR
+
+    //inserting an existing cron
+    if (!newR || cron == tS.cron || !re) {
+      const msg = "No change to existing cronData. Did not update.";
+      console.log("In updateUserSites: ", msg, { site, cron });
+      return { error: null };
+    }
+
+    const updSite = {
+      site,
+      ...(re ? tS : {}),
+      ...(cron && cron != tS?.cron ? { cron } : {}),
+      ...(range && !sR ? { range: null } : {}), //set to null when range invalid, else default to tS.range
+      ...(range && sR ? { range } : {}), //upd range when passed, else default
+      ...(canAddSite && (!tS || re) ? { active: true } : {}), //only set active:true when it's a new site or reactivating
+    };
+
+    await db`update "private"."users" set sites = array( select (case when s->>'site' = ${site} then ${updSite} else s end) from unnest(sites) as s ) where username = ${user}`;
+
     console.log("in updateUserSites. User's siteData has been changed.");
+    if (!canAddSite) throw { error: "Max crons reached" };
     return { error: null };
   } catch (e) {
     console.error("Error in updateUserSites: ", e);
@@ -513,59 +544,62 @@ export async function updateUserSites({ safeSD, user, del, re }) {
 }
 
 export async function updateCronTable({ safeSD, user, del }) {
-  //Tb structure: cron -> string | cronData -> [{cron, user, range}]
-  //For mass delete cronData on staleCron:  Less compute cost per invocation with calling this per site than setting all userSites to inactive in one go -- as cronTable will require whole table search/update for Locating cronData accross crons
-  //if insert, Call after updateUserSites -- cause that check user's maxCrons potentially throwing an error this depends on
+  //Tb structure: cron -> string, cronData -> {cron, user, range}[]
+  //For mass delete cronData on staleCron:  Less compute cost per invocation with calling this per site than setting all userSites to inactive in one go -- as cronTable will require all row search & update for Locating user sites across crons
+  //if new, Call after updateUserSites -- cause that checks user's maxCrons potentially throwing an error this depends on;
 
-  //canAddCron tracks max crons the app can cater to -- 5 right now
-  // safeSD: [{cron, site, range}];
-  //returns: delWorker: true indicates to run del on updWorker().
+  //canAddCron tracks max crons the app can cater to -- 5 right now; safeSD: {cron, site, range}[];
+  //returns: {delWorker: true} indicates to run del on updWorker().
   //check that users get MaxCron = 1 on user creation.
 
   try {
     const { cron, site, range } = safeSD;
     const cronData = { user, site, ...(range ? { range } : {}) };
 
-    const r1 = await db`select count(cron) from "private"."crons"`; //for cron length
+    const r1 = await db`select count(cron) from "private"."crons"`; //for cron length;
+    const cronCount = r1[0].count;
 
-    if (r1[0]) {
-      const r2 =
-        await db`select cron from "private"."crons" where cron = ${cron}`; // for cron availability
-
-      const sameCron = r2[0]?.cron;
-
-      const r4 =
-        await db`select "maxCrons" from "private"."settings" where id = 1`;
-
-      const canAddCrons = r1[0].count ?? 0 < r4[0]?.maxCrons ?? 5;
-
-      if (!sameCron) {
-        if (del) throw { error: "Cron does not exist!" };
-        if (!canAddCrons)
-          //this means a potential new site can't get a cron schedule -- must set site to inactive
-          throw { error: "app maxCrons reached." };
-
-        await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array[${cronData}::jsonb])`;
-      } else if (del) {
-        const r6 =
-          await db`update "private"."crons" set "cronData" = array(select c from unnest("cronData") as c where not (c ->> 'site' = ${site} and c ->> 'user' = ${user})) where cron = ${cron} returning "cronData"`;
-        const r6a = r6[0]?.cronData;
-
-        if (!r6a || !r6a?.length || (r6a?.length == 1 && r6a?.[0] == null)) {
-          await db`delete from "private"."crons" where cron = ${cron}`;
-          return { delWorker: true, error: null };
-        }
-      } //Cron exists and directive is not delete -- check that user site is included in cron array else delete
-      else
-        await db`update "private"."crons" set "cronData" = case when exists (select 1 from unnest("cronData") as c where c ->> 'site' = ${site} and c ->> 'user' = ${user}) then "cronData" else array_append( "cronData", ${cronData}::jsonb ) end where cron = ${cron}`;
-    } else {
+    if (!cronCount) {
       if (del) throw { error: "No crons found!" };
       console.log("in updateCronTable. No crons found. Inserting first cron");
       await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array[${cronData}::jsonb])`;
     }
+
+    const r2 =
+      await db`select cron from "private"."crons" where cron = ${cron}`; // for cron exists;
+    const sameCron = r2[0]?.cron;
+
+    const r3 =
+      await db`select "maxCrons" from "private"."settings" where id = 1`;
+
+    const canAddCron = (cronCount || 0) < (r3[0]?.maxCrons || 5); //for new crons;
+
+    if (!sameCron) {
+      //cron does not exist
+      if (del) throw { error: "Cron does not exist!" };
+      if (!canAddCron)
+        //new/re site can't get cron schedule -- set site inactive
+        throw { error: "app maxCrons reached." };
+
+      await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array(${cronData}::jsonb))`;
+    } else if (del) {
+      //deleting an existing cron
+      const r4 =
+        await db`update "private"."crons" set "cronData" = array(select c from unnest("cronData") as c where not (c ->> 'site' = ${site} and c ->> 'user' = ${user})) where cron = ${cron} returning "cronData"`;
+      const r4a = r4[0]?.cronData;
+
+      if (!r4a || !r4a.length || (r4a.length == 1 && r4a[0] == null)) {
+        //no cronData in cron schedule
+        await db`delete from "private"."crons" where cron = ${cron}`;
+        return { delWorker: true, error: null };
+      }
+    } else
+      //Trying to add cron -- check that cron doesn't exist then add
+      await db`update "private"."crons" set "cronData" = case when exists (select 1 from unnest("cronData") as c where c ->> 'site' = ${site} and c ->> 'user' = ${user}) then "cronData" else array_append( "cronData", ${cronData}::jsonb ) end where cron = ${cron}`;
+
     return { delWorker: false, error: null };
   } catch (e) {
-    //if adding cron -- (!del): then set userSite.inactive -- del presumes userSites.del has already been called
+    //if adding cron -- (!del): then set userSite.inactive -- del presumes userSites().del has already run
     const e0 = "In updateCronTable. Couldn't add cron to table.";
     const e1 = e0 + !del ? "Setting site to inactive" : "";
 
@@ -579,13 +613,13 @@ export async function updateCronTable({ safeSD, user, del }) {
 
 export async function updateWorker({ safeSD, user, del }) {
   try {
-    //in future can do better schedule organisation: selecting high order schedules and probing db for fitting crons; -- can take any cron check cron list for matching pattern eg a cron for /30mins and preexisting /10mins can share execute
+    //in future can do better schedule organisation: selecting high order schedules and probing db for intersecting crons; -- can take any cron check cron list for matching pattern eg a cron for /30mins and preexisting /10mins can share execute
     const { cron, site } = safeSD;
 
     const shooterUrl = process.env.SHOOTER_URL;
     const shooterKey = process.env.SHOOTER_KEY;
     console.log("in UpdateWorker. ", { shooterUrl, shooterKey });
-    if (!shooterKey || !shooterUrl) throw { error: "Setting env vars failed!" };
+    if (!shooterKey || !shooterUrl) throw { error: "env vars not found!" };
 
     const headers = {
       "Content-Type": "application/json",
@@ -599,14 +633,16 @@ export async function updateWorker({ safeSD, user, del }) {
 
     if (!r1.ok) {
       const error = "ShooterWorker API fetch failed: ";
-      throw { error, content: worker?.error };
+      throw { error, load: worker?.error };
     }
 
     console.log("ShooterWorker API fetch success: ", { cron, worker });
     const prevCrons = worker.result?.schedules || []; //{cron: "* * *"}[]
-    const thisCron = prevCrons.find((s) => s.cron == cron);
+    const thisCron = prevCrons.find((s) => s?.cron == cron);
+
     let updCrons = null;
 
+    //cron schedule exists
     if (thisCron) {
       if (!del) {
         console.error("Tried adding an existing cron!");
@@ -614,17 +650,16 @@ export async function updateWorker({ safeSD, user, del }) {
       }
       updCrons = prevCrons.filter((s) => s.cron != cron);
     } else {
+      //is new cron
       if (del) {
-        console.error("A nonexisting cron was deleted!");
+        console.error("Tried deleting nonexisting cron!");
         return { error: null };
       }
 
-      //Checking maxCrons limit before inserting cron -- should be safe after updateCronSites (only context where I'm adding crons)-- but check anyway
-      const r2 =
-        await db`select "maxCrons" from "private"."settings" where id = 1`;
-
-      const canAddCron = prevCrons.length ?? 0 < r2[0]?.maxCrons ?? 5;
-      if (!canAddCron) throw { error: "worker maxCrons reached." };
+      //Checking maxCrons limit before inserting cron -- should be safe after updateCronSites (only context where I'm adding crons) -- still check.
+      //wrong -- should check worker crons length instead. as true indication of worker cron limit.
+      const workerCrons = worker.result?.schedules?.length;
+      if (workerCrons >= 5) throw { error: "worker maxCrons reached." };
 
       updCrons = [...prevCrons, { cron }];
     }
@@ -636,20 +671,21 @@ export async function updateWorker({ safeSD, user, del }) {
     });
 
     const r3a = await r3?.json();
-    if (!r3.ok)
-      throw { error: "ShooterWorker PUT failed", content: r3a?.errors };
+    if (!r3.ok) throw { error: "ShooterWorker PUT failed", load: r3a?.errors };
 
     console.log("in updateWorker. added new cron to existing crons. ");
     return { error: null };
   } catch (e) {
-    const e0 = `Error updating worker. `;
-    const e1 = e0 + !del ? "Setting inactive and removing from cronTable" : "";
-    const log = `${e1} ${JSON.stringify({ user, error: e })}`;
-    console.error(log);
+    const e0 = "Error updating worker. ";
+    const e1 =
+      e0 + !del ? "Will set site inactive and remove from cronTable" : "";
+    const msg = `${e1} ${JSON.stringify({ user, error: e })}`;
+    setNotification({ msgData: { msg }, logError: true });
+    console.error(msg);
 
     if (!del) {
       await updateCronTable({ safeSD, user, del: true });
-      await setSiteInactive({ ...safeSD });
+      await setSiteInactive(safeSD);
     }
 
     return { error: e0 + e.error };
@@ -751,7 +787,6 @@ export async function undeleteUser(user) {
  * @returns {Promise<{tableName?: string, userSites?: any[], maxCrons?: number, error?: string}>}
  */
 export async function getUserSites({ user }) {
-  //validate session first!
   //userSites: {site, cron, range}[]
   try {
     if (!db) throw { error: "Db uninitialised!" };
@@ -766,21 +801,20 @@ export async function getUserSites({ user }) {
     return { ...siteData, maxCrons: r2[0]?.maxCrons };
   } catch (e) {
     console.error(`Error in getUserSites: `, e);
-    return { error: `Error in getUserSites: ${JSON.stringify(e)}` };
+    return { error: `Error in getUserSites: ${e.error || e.message}` };
   }
 }
 
 export async function getActiveSites(user) {
-  //for this, set active: true on all new site/cron addition
+  //for this, set active: true on all new site/cron addition and false on stale or deactivation
   try {
     const { userSites, maxCrons } = await getUserSites({ user });
-    if (!maxCrons)
-      throw { message: 'Critical error: user\'s "maxCrons" missing.' };
+    if (!maxCrons) throw { error: 'User "maxCrons" missing.' };
 
-    const activeSites = userSites?.filter((p) => p.active == true).length;
+    const activeSites = userSites?.filter((s) => s.active == true).length;
     const canAddSite = activeSites < maxCrons;
 
-    return { canAddSite, maxCrons, activeSites };
+    return { canAddSite, maxCrons, activeSites, userSites };
   } catch (e) {
     console.error("in checkActiveSites: ", e);
     return { canAddSite: false, maxCrons: 0, activeSites: 0 };
@@ -809,12 +843,12 @@ export async function setSiteInactive({ site, cron, user }) {
  * @typedef {{id?:number, date?:Date, msg:string, danger?:boolean}} msgData
  */
 /**
- * @param {{msgData: msgData, user?:string, del?:boolean, postAdmin?:boolean }} msgData
+ * @param {{msgData: msgData, user?:string, del?:boolean, logError?:boolean }} msgData
  * @returns {Promise<{id: number, error: string}>}
  */
-export async function setNotification({ msgData, user, del, postAdmin }) {
+export async function setNotification({ msgData, user, del, logError }) {
   //msgData: {id?, msg, danger};
-  //sets notification enmass for users (user[]) or just 1 (user); sets to admin account when postAdmin = true;
+  //sets notification enmass for users (user[]) or just 1 (user); sets to errorLog: {user, cron, error} when logError = true;
   //used in setNotifyEntry: called once on getting ready users, and then later for each user when shot added.
   //uses same id even for an array of users, but non unique id doesn't pose a problem as it is used in isolated user context.
 
@@ -827,8 +861,9 @@ export async function setNotification({ msgData, user, del, postAdmin }) {
 
     const { id: i, date: d, msg, danger } = msgData;
 
-    const message = msg?.trim();
-    if ((!message && !del) || !user || (del && !i))
+    //logError msg can be object
+    const message = msg.length ? msg?.trim() : msg;
+    if ((!message && !del) || (del && !i))
       throw { error: "Missing parameters" };
 
     const u = Array.isArray(user) ? user : [user];
@@ -839,13 +874,13 @@ export async function setNotification({ msgData, user, del, postAdmin }) {
     if (!del) {
       u[0] &&
         (await db`update "private"."users" set notifications = array_append(notifications, ${noti}::jsonb ) where username = any(${u})`);
-      postAdmin &&
-        (await db`update "private"."settings" set "adminNotifications" = array_append("adminNotifications", ${noti}::jsonb) where id = 1;`);
+      logError &&
+        (await db`insert into "private"."errorLog" (error) values (${{ error: message, user }}::jsonb)`);
     } else {
       u[0] &&
         (await db`update "private"."users" set notifications = array(select n from unnest(notifications) as n where n ->> 'id' != ${id}) where username = any(${u}) `);
-      postAdmin &&
-        (await db`update "private"."settings" set "adminNotifications" = array( select a from unnest("adminNotifications") as a where a ->> 'id' != ${id})`);
+      logError &&
+        (await db` delete from "private"."errorLog" where id = ${id} `);
     }
 
     return { id };
@@ -902,9 +937,7 @@ export function safeCron(cron) {
 }
 
 export function safeRange(range) {
-  if ("start" in range && range?.end && Object.entries(range)?.length == 2)
-    return range;
-  else return null;
+  if (!(isNaN(range?.start) || isNaN(range?.end))) return range;
 }
 
 export function cronToText(cron) {

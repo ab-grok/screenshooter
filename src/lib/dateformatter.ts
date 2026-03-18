@@ -21,19 +21,23 @@ export function formatDate(date: number | string | Date): string {
 export function formatRelativeTime(date: string | Date): string {
   try {
     date = isDate(date) ? date : new Date(date);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffSecs = Math.floor(diffMs / 1000);
-    const diffMins = Math.floor(diffSecs / 60);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
 
-    if (diffSecs < 60) return "just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    const miliDiff = new Date().getTime() - date.getTime();
+    const secDiff = Math.floor(miliDiff / 1000);
+    const minDiff = Math.floor(secDiff / 60);
+    const hourDiff = Math.floor(minDiff / 60);
+    const dayDiff = Math.floor(hourDiff / 24);
+    const monthDiff = Math.floor(dayDiff / 30);
+    const yearDiff = Math.floor(dayDiff / 365);
 
-    return formatDate(date);
+    if (yearDiff >= 1) return `${yearDiff} year(s) ago`;
+    if (monthDiff >= 1) return `${monthDiff} month(s) ago`;
+    if (dayDiff >= 1) return `${dayDiff} day(s) ago`;
+    if (hourDiff >= 1) return `${hourDiff} hour(s) ago`;
+    if (minDiff >= 1) return `${minDiff} min(s) ago`;
+    if (secDiff >= 1) return `${secDiff} sec(s) ago`;
+
+    return "just now";
   } catch {
     return "Null date";
   }

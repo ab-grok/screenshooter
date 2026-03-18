@@ -7,7 +7,6 @@ export type shot = {
 };
 
 export type downloadProps = {
-  unviewed?: boolean;
   user?: string;
   site?: string;
   id?: number;
