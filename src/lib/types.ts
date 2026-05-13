@@ -1,28 +1,49 @@
-export type shot = {
+export type shotData = {
   id: number;
-  html: string;
-  file: file;
   date: string; //sql timestamptz
   viewed: boolean;
+  htmlKey: string; //may be problematic sending key, can switch to hash.
+  shotKey: string;
+  shotUrl: string;
 };
 
 export type downloadProps = {
-  user?: string;
-  site?: string;
-  id?: number;
-  next?: boolean;
+  cursor?: cursor;
+  timePeriod?: timePeriod;
+  unviewed?: boolean;
 };
+
+export type cursor = { id: number; next?: boolean };
+
+export type timePeriod = { from: Date; to?: Date };
+
+export type userData = {
+  user: string;
+  joined: string;
+  isAdmin: number;
+  maxCrons: number | undefined;
+  activeSites: shotData[] | undefined;
+  userSites: shotData[] | undefined;
+};
+
+export type handleDownload = {
+  id?: number; //Needed from context menu; not needed from navbar,
+  local?: boolean;
+  unique?: number; // Date.now() which will trigger fresh downloads from navbar
+};
+
+export type getDownloadCache = { key: string; isHtml?: boolean; date: string };
 
 export type multiShots = {
   site: string;
-  shots: shotData[];
+  shots: shots[];
 };
 
 export type file = {
-  fileName: string;
-  fileData: string; //base64 or text
-  fileType: string;
   date?: string | Date; //date is not defined when used in getShots
+  fileName: string;
+  fileData: Uint8Array | string;
+  fileType: string;
 };
 
 export type deletionAttempt = {
@@ -30,8 +51,8 @@ export type deletionAttempt = {
   message: string;
 };
 
-export type shotData = {
-  shots: shot[];
+export type shots = {
+  shotsData: shotData[];
   nextCursor: number;
   prevCursor: number;
   noMoreNext: boolean;
@@ -48,7 +69,7 @@ export type siteData = {
 
 export type unviewedType = {
   site: string;
-  unvieweds: number;
+  unvieweds: number[];
 };
 
 export type handleViewed = {
@@ -57,13 +78,14 @@ export type handleViewed = {
 };
 
 export type optimisticUnvieweds = {
-  delCount?: number;
-  allUnvieweds?: unviewedType[];
+  delIds?: number[]; //deleted shot ids
+  allSitesUnvieweds?: unviewedType[];
 };
 
 export type selectedShot = {
   id?: number;
   swiperId?: number;
+  single?: boolean; // clear other selected shots
 };
 
 export type delShotType = {
@@ -78,6 +100,6 @@ export type userSites = {
 }[];
 
 export type queryData = {
-  pages: shotData[];
+  pages: shots[];
   pageParam: { id: number; next: boolean };
 };

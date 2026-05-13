@@ -66,13 +66,13 @@ export function ShotCard({
     [markingViewed, localViewed],
   );
 
-  //done
+  //refix
   const downloadShot = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation(); //prevent click from triggering card's onClick
+    e.stopPropagation(); //prevent this click from triggering card's onClick
     const { error } = await download({ ...shot.file, date: shot.date });
   }, []);
 
-  //done
+  //Retrieve html from R2 here!
   const copyHtml = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -85,7 +85,7 @@ export function ShotCard({
     }
   }, []);
 
-  //done
+  //done: set to button/ context menu
   const openHtmlInNewPage = useCallback(async (e: React.MouseEvent) => {
     //call downloader passing html as text/plain or perhaps there's a type for that
     e.stopPropagation();
@@ -99,11 +99,11 @@ export function ShotCard({
     }
   }, []);
 
-  // ctrlClicked: is multiSelect -- will not open shot or mark viewed but set to selectedShots, else does
+  // if ctrlKey: multiSelect -- will not open shot or mark viewed but set to selectedShots; else does
   const handleClicked = useCallback((e: React.MouseEvent) => {
     if (e.ctrlKey) toggleSelect({ id: shot.id, swiperId });
     else {
-      toggleSelect({ id: shot.id, swiperId });
+      toggleSelect({ id: shot.id, swiperId, single: true });
       markViewed(e);
       onOpened(shot);
     }
@@ -111,11 +111,12 @@ export function ShotCard({
 
   //getting active shot on delShot not dependent on slides change, cause selectedShots will not trigger slideChange
 
-  //create a select button
+  //create a select button on card
   const handleSelectShot = useCallback(() => {
     toggleSelect({ id: shot.id });
   }, []);
 
+  //Create a delete button on card
   const handleDelete = useCallback(() => {
     onDelete({ ids: shot.id });
   }, []);

@@ -16,7 +16,6 @@ import type {
   delShotType,
   handleViewed,
   selectedShot,
-  shot,
   shotData,
 } from "@/lib/types";
 
@@ -27,15 +26,19 @@ import { setViewed } from "@/lib/actions";
 import { useDownloader } from "@/lib/downloader";
 
 interface GalleryProps {
-  siteShots: shot[] | undefined;
   site: string;
-  openedShot: shot | undefined;
-  onOpenedShot: (shot: shot) => void;
+  siteShots: shotData[] | undefined;
+  openedShot: shotData | undefined;
+  selectedShots: selectedShot[];
   preserveScroll: preserveScrollType;
-  onDeleteShot: ({ ids }: delShotType) => void; //deletes selectedShots when active
   delSelectedShots: number;
   downloadSelectedShots: number;
   viewSelectedShots: number;
+  onOpenedShot: (shot: shotData) => void;
+  onDeleteShot: ({ ids }: delShotType) => void; //deletes selectedShots when active
+  onSelectedShots: (
+    fn: selectedShot[] | ((shot: selectedShot[]) => selectedShot[]),
+  ) => void;
 }
 
 function ShotSkeleton() {
@@ -53,15 +56,17 @@ function ShotSkeleton() {
 }
 
 export function Gallery({
-  siteShots,
   site,
-  openedShot,
-  onOpenedShot, //unneeded: will select shots here and pass to selected shot -- false need in parent for selectedViewer
+  siteShots,
+  openedShot, //for altering viewed
+  selectedShots,
   preserveScroll,
-  onDeleteShot,
   delSelectedShots,
-  downloadSelectedShots,
   viewSelectedShots,
+  downloadSelectedShots,
+  onOpenedShot, //unneeded: will select shots here and pass to selected shot -- false need in parent for selectedViewer
+  onDeleteShot,
+  onSelectedShots,
 }: GalleryProps) {
   // const [shots, setShots] = useState<Shot[]>(initialShots);
   // const [isLoadingOlder, setIsLoadingOlder] = useState(false); //replace with fetchingPrevShots
@@ -72,17 +77,16 @@ export function Gallery({
   // const [hasMoreNewer, setHasMoreNewer] = useState(true);
 
   const [error, setError] = useState<string | null>(null);
-  const [selectedShots, setSelectedShots] = useState([] as selectedShot[]); //will be passed to shotCard to acc selects and used for dl
   const [addedCount, setAddedCount] = useState(0); //will be passed to shotCard to acc selects and used for dl
-  const [firstShotDeled, setFirstShotDeled] = useState<number | null>(null); //holds id of first shot in selectedShots when deled
+  const [firstDeledShot, setFirstDeledShot] = useState<number | null>(null); //holds id of first shot in selectedShots when deled
 
-  const { shots, fetchNextShots, fetchPrevShots, ...r } = useQueryShots(site);
-  const { fetchingNextShots, fetchingPrevShots, shotsRefetch } = r;
+  const { shots, fetchNextShots, fetchPrevShots, ...s } = useQueryShots(site);
+  const { fetchingNextShots, fetchingPrevShots, shotsRefetch } = s;
   const { mutateViewed, resetViewed, ...v } = useMutateViewed(site);
   const { mutateViwedErr, mutatingViewed } = v; // set loader or sth
-  const { capturePosition, restorePosition, swiperRefs } = preserveScroll;
-  const galleryRef = useRef<HTMLDivElement | null>(null); //unused
+  const { capturePosition, restorePosition, swiperRefs } = preserveScroll; //a user can switch between multiple sites, and I need the scroll position restored after a change and back to a site -- this achieved?
   const { download } = useDownloader();
+  const galleryRef = useRef<HTMLDivElement | null>(null); //unused
 
   const noMorePrev = useMemo(() => {
     if (!shots?.pages?.length) return true;
@@ -91,28 +95,28 @@ export function Gallery({
 
   const noMoreNext = useMemo(() => {
     if (!shots?.pages?.length) return true;
-    return shots.pages[shots.pages.length - 1].noMoreNext;
+    return shots.pages.at(-1)?.noMoreNext;
   }, [shots]);
 
   //global effect for restorePositon on shot change -- position captured per slide change.
-  // Uses firstShotDeled for restoring to previous id after delShot -- may need change if grid layout / manual scroll
-  //on delShot fail: effect retriggers refixing optimstically deled shots and setting to activeIndex in capturePosition -- good.
+  // Uses firstDeledShot for restoring to previous id after delShot -- may need change if grid layout / manual scroll
+  //on delShot fail: effect retriggers refixing optimstically deled shots and setting to activeIndex from capturePosition -- good.
   // Else block: non delshot shots change: uses addedCount ( only useful for prepended shots);
   useEffect(() => {
     if (!shots?.pages?.length) return;
 
-    if (Number(firstShotDeled)) {
+    if (Number(firstDeledShot)) {
       if (!selectedShots.length) return;
 
-      let prevId =
+      let prevShotId =
         Math.min(...selectedShots.map((s) => s.swiperId!).filter(Boolean)) - 1;
-      prevId = prevId >= 0 ? prevId : 0;
+      prevShotId = prevShotId >= 0 ? prevShotId : 0;
 
-      setSelectedShots([]); //runs after optiistic del
-      setFirstShotDeled(null);
+      onSelectedShots([]); //runs after optiistic del
+      setFirstDeledShot(null);
 
-      //at this point shots have been deled -- no need for requestAnimationFrame to wait for another DOM update -- correct ?
-      const restored = restorePosition({ site, prevId });
+      //at this point shots have been deled -- no need for requestAnimationFrame to wait for DOM to update before restoring position -- is this concept of requestAnimationFrame accurate or perhaps the goal to restore position seamlessly is simply useLayoutEffect no requestAimationFrame in talks?
+      const restored = restorePosition({ site, prevShotId });
       if (!restored) console.error("Failed to restore ");
     } else {
       restorePosition({ site, addedCount });
@@ -136,6 +140,7 @@ export function Gallery({
     handleDownloadSelectedShots();
   }, [downloadSelectedShots]);
 
+  // Fix download
   const handleDownloadSelectedShots = useCallback(async () => {
     try {
       const selIds = selectedShots.map((s) => s.id!);
@@ -150,7 +155,7 @@ export function Gallery({
     }
   }, []);
 
-  // Optimistically mods shots.viewed, can call by selectedShots; captures curr slide pos; -- pos is restored on shots mod in global cap effect
+  // Optimistically mods shots.viewed, can call by selectedShots; capture unnecessary and removed.
   const handleViewed = useCallback(
     async ({ id, viewSelectedShots }: handleViewed) => {
       try {
@@ -159,10 +164,6 @@ export function Gallery({
         if (viewSelectedShots && selectedShots?.length) {
           ids = selectedShots.map((s) => s.id!);
         }
-
-        const captured = capturePosition(site);
-        if (!captured)
-          console.error("in Gallery handleViewed: Failed to capture position");
 
         const { error } = await mutateViewed({ ids }); //before await resolves, shots refresh optimistically
         if (error) throw error;
@@ -181,7 +182,7 @@ export function Gallery({
         capturePosition(site);
         if (!ids) {
           if (!selectedShots.length) return;
-          setFirstShotDeled(selectedShots[0].swiperId!);
+          setFirstDeledShot(selectedShots[0].swiperId!);
 
           ids = selectedShots.map((s) => s.id!);
 
@@ -191,7 +192,7 @@ export function Gallery({
         }
         return;
       } catch (e: any) {
-        console.error("in Gallery handleDeleteShot: ", e);
+        console.error("in Gallery handleDeleteShot2: ", e);
         setError(e);
       }
     },
@@ -205,7 +206,7 @@ export function Gallery({
       if (savedSwiper) return;
 
       const thisSwiper = { swiper, site };
-      swiperRefs.current = [...swiperRefs.current, thisSwiper];
+      swiperRefs.current.push(thisSwiper);
     },
     [site],
   );
@@ -219,7 +220,7 @@ export function Gallery({
       if (error) throw error;
 
       //Prepended shots which means orginal position shifted forwards (or upwards when grid layout)
-      setAddedCount(data?.pages[0].shots.length!);
+      setAddedCount(data?.pages[0].shotsData.length!);
     } catch (e: any) {
       console.error("In onScrollDown: ", e);
       setError(e);
@@ -243,9 +244,15 @@ export function Gallery({
 
   //computes the onEnd/onStartReached of the slides and fetches old/new on either -- will change to a scrollTop reached fn
   //Logic change after implementing slides as grid?: get container height and calc container top reached and loading next and container bottom reached and load prev shots (use requestAnimFrame);
+  //implemented toggleSelectShot here even if not opened, since 'slide change' = activeIndex change -- is assumption correct?
   const handleSlideChange = useCallback(
     async (swiper: SwiperType) => {
+      const swiperId = swiper.activeIndex;
+      const id = siteShots?.at(swiperId)?.id;
+
+      toggleSelectShot({ id, swiperId, single: true });
       capturePosition(site);
+
       try {
         if (swiper.activeIndex < 5 && !noMorePrev && !fetchingPrevShots)
           await onScrollDownEdge();
@@ -263,14 +270,22 @@ export function Gallery({
     [noMorePrev, noMoreNext, fetchingNextShots, fetchingPrevShots],
   );
 
-  //Updates selectedShots array to include or uninclude passed shot.id
-  const toggleSelectShot = useCallback(({ id, swiperId }: selectedShot) => {
-    setSelectedShots((shot) => {
-      const wasSelected = shot.find((s) => s.id == id);
-      if (wasSelected) return shot.filter((s) => s.id != id);
-      return [...shot, { id, swiperId }];
-    });
-  }, []);
+  //Passed to ShotCard for onSelect shot (multiShots); Updated here on slideChange (single shot);
+  const toggleSelectShot = useCallback(
+    ({ id, swiperId, single }: selectedShot) => {
+      //single: clears prevArray;
+      //looking to pass id to capturePosition on onOpenedChange or selectedShots (from highest swiperID)
+
+      onSelectedShots((shot) => {
+        if (single) return [{ id, swiperId }];
+
+        const wasSelected = shot.find((s) => s.id == id);
+        if (wasSelected) return shot.filter((s) => s.id != id);
+        return [...shot, { id, swiperId }];
+      });
+    },
+    [],
+  );
 
   if (siteShots?.length == 0 && !fetchingNextShots && !fetchingPrevShots) {
     return (
@@ -366,7 +381,7 @@ export function Gallery({
           className="py-4"
         >
           {siteShots &&
-            siteShots.map((shot, id) => (
+            siteShots.map((shot, i) => (
               <SwiperSlide key={shot.id} className="h-auto">
                 <ShotCard
                   shot={shot}
@@ -376,7 +391,7 @@ export function Gallery({
                   onDelete={handleDeleteShot2}
                   site={site}
                   toggleSelect={toggleSelectShot}
-                  swiperId={id}
+                  swiperId={i}
                 />
               </SwiperSlide>
             ))}

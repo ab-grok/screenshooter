@@ -1,6 +1,10 @@
-## `Name`: ScreenShooter
+## About App
 
-## `Description`: Takes screenshots of webpages for you while you do other things 👌 :blue_heart:
+### `Name`: WebShooter
+
+### `Description`: Takes screenshots of webpages for you while you do other things 👌 :blue_heart:
+
+--
 
 ## Important Operational Parameters:
 
@@ -18,14 +22,32 @@
 
 ### `private.settings`: sets maxCrons (total app cron limit), storeDuration (in days), admin notifications (Error logs)
 
+### `User sites`: share a shot_url column unlike {site}\_html_key, {site}\_shot_key which are per site.
+
 ## DB query Functions to rateLimit:
 
-### `getUnviewedCount`: (main)/page.tsx
+### `getUnviewedIds`: (main)/page.tsx
 
 ---
 
-## Notes
+## Operational flaws ?
 
 ### Effects with deps `(download*)` are triggered by number mutations and not reset to null -- which may be problematic in special cases.
 
 ### Global restore position `function for switching to prev active slide after mutation` set in Gallery.tsx
+
+### Limited Shots Download: Vercel API payload cap is 4.5mb, this means at most a single image data from R2 can be retrieved -- requiring much invocations.
+
+--
+
+--
+
+## Access Privileges
+
+### `Settings table`: holds maxCrons:text, storeDays:number, admin:[] (admins(uuid) here can modify Settings and access errorLogs);
+
+---
+
+## Security flaws (potential)
+
+### `getShots`: sends 'htmlKey' to client, which can be used to access user shotdata from R2 bucket. Mitigating this through signed API validation in worker. ~can encrypt htmlKey on db write and send that instead~

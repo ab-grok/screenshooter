@@ -19,8 +19,8 @@ interface SitesTabProps {
   sites: siteData[] | undefined;
   selectedSite: siteData | undefined;
   sitesLoading: boolean;
-  allUnvieweds: unviewedType[];
-  selectedDbUnviewed: unviewedType | undefined;
+  allSitesUnvieweds: unviewedType[];
+  selectedSiteUnviewed: unviewedType | undefined;
   onAddNew: () => void;
   onSelectSite: (site: siteData) => void;
 }
@@ -28,9 +28,9 @@ interface SitesTabProps {
 export function SitesTab({
   sites,
   selectedSite,
-  allUnvieweds,
+  allSitesUnvieweds,
   sitesLoading,
-  selectedDbUnviewed,
+  selectedSiteUnviewed,
   onAddNew,
   onSelectSite,
 }: SitesTabProps) {
@@ -46,19 +46,20 @@ export function SitesTab({
           <div className="flex items-center gap-2">
             <Globe className="text-primary h-4 w-4" />
             <span className="max-w-[120px] truncate">
-              {selectedSite?.site}
-              {sitesLoading ? (
+              {selectedSite ? (
+                selectedSite.site
+              ) : sitesLoading ? (
                 <Loader2 className="text-primary h-6 w-6 animate-spin" />
               ) : (
                 "Select a site"
               )}
             </span>
-            {selectedDbUnviewed?.unvieweds && (
+            {selectedSiteUnviewed?.unvieweds?.length && (
               <Badge
                 variant="default"
                 className="bg-primary h-5 min-w-[20px] justify-center px-1.5 text-[10px]"
               >
-                {selectedDbUnviewed.unvieweds}
+                {selectedSiteUnviewed.unvieweds.length}
               </Badge>
             )}
           </div>
@@ -76,7 +77,7 @@ export function SitesTab({
       >
         <AnimatePresence>
           {sites?.map((site, index) => {
-            const thisSite = allUnvieweds.find((u) => u.site == site.site);
+            const thisSite = allSitesUnvieweds.find((u) => u.site == site.site);
 
             return (
               <motion.div
@@ -102,12 +103,12 @@ export function SitesTab({
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {thisSite?.unvieweds! > 0 && (
+                    {(thisSite?.unvieweds?.length || 0) > 0 && (
                       <Badge
                         variant="secondary"
                         className="h-5 min-w-[20px] justify-center px-1.5 text-[10px]"
                       >
-                        {thisSite?.unvieweds}
+                        {thisSite?.unvieweds.length}
                       </Badge>
                     )}
                     <a
@@ -129,7 +130,7 @@ export function SitesTab({
 
         {!sites?.length && (
           <div className="text-muted-foreground px-2 py-4 text-center text-sm">
-            No sites configured
+            No active sites
           </div>
         )}
 

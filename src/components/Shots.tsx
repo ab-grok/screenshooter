@@ -3,17 +3,25 @@
 
 import {
   useMutateDel,
+  useMutateHtml,
+  useMutateShotBinary,
   useMutateViewed,
   useQueryShots,
 } from "@/app/(main)/reactquery";
 import { useDownloader } from "@/lib/downloader";
 import {
+  cursor,
   delShotType,
+  file,
+  getDownloadCache,
+  handleDownload,
   optimisticUnvieweds,
   queryData,
-  shot,
+  selectedShot,
   shotData,
+  shots,
   siteData,
+  timePeriod,
   unviewedType,
 } from "@/lib/types";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
@@ -32,8 +40,9 @@ import { motion } from "framer-motion";
 import { SelectedViewer } from "./SelectedViewer";
 import { Gallery } from "./Gallery";
 import { preserveScrollType, usePreserveScroll } from "@/lib/usePreserveScroll";
-import { delShot, getDbShots, getUnviewedCount } from "@/lib/actions";
+import { delShot, getDbShotKeys, getUnviewedIds } from "@/lib/actions";
 import { formatDate } from "@/lib/dateformatter";
+import { useQueryClient } from "@tanstack/react-query";
 
 type state = {
   value: boolean;
@@ -46,14 +55,20 @@ type ShotsProp = {
   onAddSite: () => void;
   preserveScroll: preserveScrollType;
   deleteSelectedShots: number;
-  downloadlocalUnviewed: number;
-  downloaddbUnviewed: number;
-  downloadCurrAndNewShots: number;
-  downloadShotsBeforeCurr: number;
+  downloadTimePeriod: timePeriod;
+  downloadUnviewedAfterCurr: handleDownload; //pass 'local' to download local unvieweds else db;
+  downloadUnviewedBeforeCurr: handleDownload;
+  downloadCurrShotAndAfter: handleDownload; //from navbar; selectedShot must be defined here no need for id
+  downloadCurrShotAndBefore: handleDownload;
+  selectedShots: selectedShot[];
   downloadSelectedShots: number;
   viewSelectedShots: number;
-  onlocalUnviewed: (n: number) => void;
-  onAllUnvieweds: ({ delCount, allUnvieweds }: optimisticUnvieweds) => void;
+  onlocalUnviewed: (uv: number[]) => void;
+  onSelectedShots: Dispatch<SetStateAction<selectedShot[]>>;
+  onAllSitesUnvieweds: ({
+    delIds,
+    allSitesUnvieweds,
+  }: optimisticUnvieweds) => void; //what's this for?
 };
 
 export default function Shots({
@@ -61,57 +76,54 @@ export default function Shots({
   site,
   onAddSite,
   preserveScroll,
+  selectedShots,
   deleteSelectedShots,
-  downloadlocalUnviewed,
-  downloaddbUnviewed,
-  downloadCurrAndNewShots,
-  downloadShotsBeforeCurr,
+  downloadTimePeriod,
+  downloadUnviewedAfterCurr,
+  downloadUnviewedBeforeCurr,
+  downloadCurrShotAndAfter,
+  downloadCurrShotAndBefore,
   downloadSelectedShots,
   viewSelectedShots,
+  onSelectedShots,
   onlocalUnviewed,
-  onAllUnvieweds,
+  onAllSitesUnvieweds,
 }: ShotsProp) {
   // const [siteShots, setSiteShots] = useState<shot[]>();
-  const [openedShot, setOpenedShot] = useState<shot>(); //send setter to gallery>shotCard
+  const [openedShot, setOpenedShot] = useState<shotData>(); //send setter to gallery>shotCard //used for viewed mod!
   const [prevOpenedShotId, setPrevOpenedShotId] = useState<number>();
-  const [delCount, setDelCount] = useState(0);
+  const [delIds, setDelIds] = useState<number[]>();
   const [newShots, setNewShots] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   //hooks
   const { download, openInNewTab } = useDownloader(); //custom downloader
+  const { shotBinary, getShotBinary } = useMutateShotBinary(site);
+  const { html, getHtml } = useMutateHtml(site);
   const { shotsLoading, shotsError, shots, ...r } = useQueryShots(site);
   const { shotsRefetch, shotsRefetching, fetchNextShots, fetchPrevShots } = r;
   const { mutateDelErr, mutateDel, delReset, mutatingDel } = useMutateDel(site); //setShots deleting
-
   const { swiperRefs } = preserveScroll;
 
   //siteShots will update when shots is defined; useMemo prevents recomputation on [non shots changed] rerenders
   const siteShots = useMemo(
-    () => shots?.pages.flatMap((shotData: shotData) => shotData?.shots ?? []),
-    [shots],
-  );
-
-  const localUnviewed = useMemo(
-    () => shots?.pages.flatMap((p) => p.shots).filter((s) => !s.viewed).length,
+    () => shots?.pages.flatMap((shots) => shots?.shotsData ?? []),
     [shots],
   );
 
   //updates localUnviewed used in Navbar
   useEffect(() => {
-    if (!shots) return;
+    const localUnviewed = siteShots?.filter((s) => !s.viewed).map((s) => s.id);
+    onlocalUnviewed(localUnviewed!);
+  }, [siteShots]);
 
-    onlocalUnviewed(
-      shots?.pages.flatMap((p) => p.shots).filter((s) => !s.viewed).length,
-    );
-  }, [localUnviewed]);
-
-  //Effect retrieving shots from db every 1 min; Throws when !rows
+  //Fetches new shots from db every 1 min; Throws when !rows
   //Should fetch if noMoreShots -- else the user hasn't scrolled to latest;
+
   useEffect(() => {
     timerRef.current = setInterval(async () => {
       try {
-        if (!shots) throw "Shots haven't loaded. Will rerun in one Minute";
+        if (!shots) throw "Shots haven't loaded. Will rerun in next Minute";
         const noMoreNext = shots?.pages?.at(-1)?.noMoreNext;
         if (!noMoreNext) throw "User is behind on stored shots";
         const { error } = await fetchNextShots();
@@ -119,62 +131,17 @@ export default function Shots({
 
         setNewShots(Date.now());
         const time = formatDate(Date.now());
-        console.log("in Shots timeoutManager. Ran fetch on: ", time);
+        console.log("in Shots.tsx: auto fetch ran fetch on: ", time);
       } catch (e) {
         setNewShots(0);
-        console.error("Attempted new shots fetch: ", e);
+        console.error("Tried fetching new shots: ", e);
       }
     }, 1000 * 60);
 
     return () => {
-      clearInterval(timerRef.current!);
+      clearInterval(timerRef.current!); //does this work?
     };
   }, []);
-
-  //used in SelectedViewer -- for?
-  const getPrevShot = useCallback(
-    (id: number) => {
-      //this render-glitch free? -- is passed to selectedViewer > ...?
-      if (!siteShots) return undefined;
-
-      return siteShots.find((s) => s.id == id);
-    },
-    [siteShots],
-  );
-
-  const refreshShots = useCallback(async () => {
-    try {
-      const { error } = await shotsRefetch();
-      if (error) throw error;
-    } catch (e) {
-      console.error("in refreshShots, Problem with refresh: ", e);
-      //setError
-    }
-  }, []);
-
-  //Gets unviewedCount: if() filters out shots change from onPrevShot or refetch
-  // notOpenedShot: the current openedshot is not new; mutatingDel: true while deleting; newShots: true when fetched new shots; shotsLoading: true for init shots fetch;
-  useEffect(() => {
-    const notOpenedShot = !openedShot || openedShot?.id == prevOpenedShotId;
-    if (notOpenedShot && !mutatingDel && !newShots && !shotsLoading) return;
-
-    //optimisically reduces unviewedcount on del
-    if (mutatingDel) {
-      onAllUnvieweds({ delCount });
-    }
-
-    try {
-      (async () => {
-        const { error, allUnvieweds } = await getUnviewedCount(); // Main.Page filters for site unvieweds
-        if (error || !allUnvieweds) throw error;
-
-        onAllUnvieweds({ allUnvieweds });
-        if (openedShot) setPrevOpenedShotId(openedShot?.id);
-      })();
-    } catch (e) {
-      console.error("In Shots getUnviewedCount: ", e);
-    }
-  }, [shots, shotsLoading]);
 
   //tracks ctrl + R for refresh
   useEffect(() => {
@@ -192,26 +159,101 @@ export default function Shots({
     return () => window.removeEventListener("keydown", ctrlR);
   }, [refresh]);
 
+  //used in SelectedViewer -- for?
+  // const getPrevShot = useCallback(
+  //   (id: number) => {
+  //     // passed to selectedViewer > ...?
+  //     //this render-glitch free?
+  //     if (!siteShots) return undefined;
+
+  //     return siteShots.find((s) => s.id == id);
+  //   },
+  //   [siteShots],
+  // );
+
+  const refreshShots = useCallback(async () => {
+    try {
+      const { error } = await shotsRefetch();
+      if (error) throw error;
+    } catch (e) {
+      console.error("in refreshShots, Problem with refresh: ", e);
+      //setError
+    }
+  }, []);
+
+  //Gets unviewedCount: if filters out shots change from onPrevShot or refetch
+  //Will update optimistically on viewed since mutateViewed alters shots > siteShots
+  //notOpenedShot: the current openedshot is not new; mutatingDel: true while deleting shot; newShots: true after recent shots fetch; shotsLoading: true for init shots fetch;
+  useEffect(() => {
+    const notOpenedShot = !openedShot || openedShot?.id == prevOpenedShotId;
+    if (notOpenedShot && !mutatingDel && !newShots && !shotsLoading) return;
+
+    //optimisically reduces unviewedcount on del; Hoping mutatingDel is true when effect runs from siteShots change;
+    if (mutatingDel) {
+      onAllSitesUnvieweds({ delIds });
+    }
+
+    try {
+      (async () => {
+        //WIll set to retrieve id[] of count.
+        const { error, allSitesUnvieweds } = await getUnviewedIds(); // Main.Page filters for site unvieweds
+        if (error || !allSitesUnvieweds) throw error;
+
+        onAllSitesUnvieweds({ allSitesUnvieweds });
+        if (openedShot) setPrevOpenedShotId(openedShot?.id);
+      })();
+    } catch (e) {
+      console.error("In Shots getUnviewedIds: ", e);
+    }
+  }, [siteShots, shotsLoading, openedShot?.id]);
+
+  //HandleDelShot -- handles del in both gallery and selectedViewer
+  const handleDeleteShot = useCallback(async ({ ids }: delShotType) => {
+    try {
+      ids = Array.isArray(ids) ? ids : [ids];
+
+      setDelIds(ids);
+      const { error } = await mutateDel(ids); //calls mutateShots fn
+      if (error) throw error;
+    } catch (e: any) {
+      console.error("in handleDeleteShot: ", e);
+      //setError -- timeOut
+    }
+  }, []);
+
   //effects for download triggers called in NavBar or context menu -- create context menu
+  //triggered in Navbar?; able to run here with current shot/slide id from swiper instance -- grid implementation should have curr slide instance
   useEffect(() => {
-    if (!downloadlocalUnviewed) return;
-    handleDownloadLocalUnviewed();
-  }, [downloadlocalUnviewed]);
+    if (!downloadTimePeriod) return;
+    const { from, to } = downloadTimePeriod;
+    handleDownloadTimePeriod({ from, to });
+  }, [downloadTimePeriod]);
 
   useEffect(() => {
-    if (!downloaddbUnviewed) return;
-    handleDownloadDbUnviewed();
-  }, [downloaddbUnviewed]);
+    //refixing to allow local unviewed download with prop
+    if (!downloadUnviewedAfterCurr) return;
+    const { local } = downloadCurrShotAndAfter;
+    handleDownloadUnviewedAfterCurrent({ local });
+  }, [downloadUnviewedAfterCurr.unique]);
 
   useEffect(() => {
-    if (!downloadShotsBeforeCurr) return;
-    handleDownloadShotsBeforeCurrent();
-  }, [downloadShotsBeforeCurr]);
+    if (!downloadUnviewedBeforeCurr) return;
+    const { local } = downloadCurrShotAndBefore;
+    handleDownloadUnviewedBeforeCurrent({ local });
+  }, [downloadUnviewedBeforeCurr.unique]);
 
   useEffect(() => {
-    if (!downloadCurrAndNewShots) return;
-    handleDownloadCurrentAndNewShots();
-  }, [downloadCurrAndNewShots]);
+    if (!downloadCurrShotAndBefore) return;
+    const { local } = downloadCurrShotAndBefore;
+    handleDownloadCurrentShotAndBefore({ local });
+  }, [downloadCurrShotAndBefore.unique]);
+
+  useEffect(() => {
+    if (!downloadCurrShotAndAfter) return;
+    const { local } = downloadCurrShotAndAfter;
+    handleDownloadCurrentShotAndAfter({ local });
+  }, [downloadCurrShotAndAfter.unique]);
+
   //downloadSelectedShots fn in Gallery
 
   useEffect(() => {
@@ -220,101 +262,220 @@ export default function Shots({
     //setError
   }, [mutateDelErr]);
 
-  const handleDownloadDbUnviewed = useCallback(async () => {
-    //rateLimit?
-    try {
-      const props = { unviewed: true, site };
-      const { error: e1, downloadShots } = await getDbShots(props);
-      if (e1 || !downloadShots) throw e1;
+  //downloadCache helper, returns the shotBinary or Html in file format
+  const getDownloadCache = useCallback(
+    async ({ key, date, isHtml }: getDownloadCache) => {
+      //can handle HTML -- when !isShot;
+      //abstract in download fn
+      //check cache presence
+      const queryClient = useQueryClient();
+      const shotCache: any = queryClient.getQueryData([site, "downloadShots"])!;
+      const htmlCache: any = queryClient.getQueryData([site, "html"]);
 
-      const dbUnviewedhots = downloadShots.map((s) => ({
-        ...s.file,
-        date: s.date,
+      //format 'isShot/user/site_date_time' to 'site date time';
+      const fileName = key.split("/").slice(2).join().replace(/_/g, " ");
+      const fileType = isHtml ? "text/html" : "image/png";
+      let fileData = isHtml ? htmlCache[key] : shotCache[key];
+
+      // is image
+      if (!fileData && !isHtml)
+        fileData = (await getShotBinary({ shotKey: key })).shotBin;
+      // is text
+      if (!fileData && isHtml)
+        fileData = (await getHtml({ htmlKey: key })).html;
+
+      if (!fileData) throw { mmessage: "FileData undefined" };
+      else return { fileName, fileType, fileData, date };
+    },
+    [],
+  );
+
+  //localUnviewedShots helper: gets the unviewed keys from loaded shots
+  const getLocaluvShotKeys = useCallback(
+    ({ id, next }: cursor) => {
+      const uvShotKeys0 = siteShots?.filter((s) => !s.viewed)!;
+      const uvShotKeys1 = uvShotKeys0.filter((u) =>
+        next ? u.id > id - 1 : u.id < id + 1,
+      ); //+,- for including the current shot;
+      const uvShotData = uvShotKeys1.map((u) => ({
+        key: u.shotKey,
+        date: u.date,
       }));
 
-      const { error: e2 } = await download(dbUnviewedhots);
-      if (e2) throw e2;
-    } catch (e) {
-      console.error("in handleDownloadDbUnviewed: ", e);
-    }
-  }, [site]);
+      return { uvShotData };
+    },
+    [siteShots],
+  );
 
-  //Downloads retrieved unviewd shots -- will need one that seeks db for all unvieweds shots.
-  const handleDownloadLocalUnviewed = useCallback(async () => {
-    try {
-      if (!siteShots?.length) return;
+  const handleDownloadUnviewedAfterCurrent = useCallback(
+    async ({ id, local }: handleDownload) => {
+      //Gets local shotKeys or dbShotKeyskeys, then retrieves cached binary or gets one from R2bucket;
+      //pass id: when invoked in Gallery > ShotCard > context menu;
+      //rateLimit?
+      try {
+        //Normalise id: if not passed, get from selectedShots
+        id = id ? id - 1 : selectedShots.at(0)?.id! - 1; // 2ill throw if id undefined
 
-      const unviewedShots = siteShots
-        ?.filter((s) => s.viewed == false)
-        .map((s) => ({ ...s.file, date: s.date })); //returning an object with date -- used for naming in downloader;
+        if (local) {
+          //get local unvieweds
+          const uvShotData = getLocaluvShotKeys({ id, next: true }).uvShotData; //this returns {key, date}
+          const uvPromise = uvShotData.map((u) =>
+            getDownloadCache({ key: u.key, date: u.date }),
+          );
+          const uvShots = await Promise.all(uvPromise);
+          const { error: e1 } = await download(uvShots);
+          if (e1) throw e1;
+        } else {
+          //get db unvieweds
 
-      const { error } = await download(unviewedShots);
-      if (error) throw error;
-    } catch (e) {
-      console.error("in handleDownloadLocalUnviewed: ", e);
-    }
-  }, [siteShots]);
+          const uvProp = { site, cursor: { id, next: true }, unviewed: true };
+          const { error: e2, dShotData } = await getDbShotKeys(uvProp);
+          if (e2) throw e2;
 
-  const handleDownloadCurrentAndNewShots = useCallback(async () => {
-    try {
-      const swiperRef = swiperRefs.current.find((s) => (s.site = site));
+          const uvPromise = dShotData.map((d) =>
+            getDownloadCache({ key: d.shotKey, date: d.date }),
+          );
+          const uvShots = await Promise.all(uvPromise);
+          const { error: e3 } = await download(uvShots);
+          if (e3) throw e3;
+        }
+      } catch (e: any) {
+        console.error("in handleDownloadUnviewedAfterCurrent: ", e.error);
+        //set Error Notification
+      }
+    },
+    [site, selectedShots],
+  );
 
-      if (!swiperRef)
-        throw { error: "swiperRef unintialised", swiperRef, swiperRefs };
-      if (!siteShots?.length)
-        throw { error: "No shots found", shotsLength: siteShots?.length };
+  const handleDownloadUnviewedBeforeCurrent = useCallback(
+    async ({ id, local }: handleDownload) => {
+      try {
+        //Normalise id: passed from context menu (right clicked) or derived from selected shot;
+        id = id ? id + 1 : selectedShots.at(-1)?.id! + 1; //will throw if undefined!
 
-      const newShots = siteShots
-        .slice(swiperRef.swiper.activeIndex)
-        .map((s) => ({ ...s.file, date: s.date }));
+        if (local) {
+          const { uvShotData: uSD } = getLocaluvShotKeys({ id, next: false });
+          const uvPromise = uSD.map((u) =>
+            getDownloadCache({ key: u.key, date: u.date }),
+          );
+          const uvShots = await Promise.all(uvPromise);
+          const { error: e1 } = await download(uvShots);
+          if (e1) throw e1;
+        } else {
+          const uvProp = { site, cursor: { id, next: false }, unviewed: true };
+          const { error: e2, dShotData: dSD } = await getDbShotKeys(uvProp);
+          if (e2) throw e2;
 
-      const { error } = await download(newShots);
-      throw error;
-    } catch (e) {
-      console.error("in downloadShotsAfterCurrent: ", JSON.stringify(e));
-    }
-  }, [siteShots]);
+          const uvPromise = dSD.map((d) =>
+            getDownloadCache({ key: d.shotKey, date: d.date }),
+          );
+          const uvShots = await Promise.all(uvPromise);
+          const { error: e3 } = await download(uvShots);
+          if (e3) throw e3;
+        }
+      } catch (e) {
+        console.error("in handleDownloadUnviewedAfterCurrent: ", e);
+      }
+    },
+    [site, selectedShots],
+  );
 
-  const handleDownloadShotsBeforeCurrent = useCallback(async () => {
-    try {
-      const swiperRef = swiperRefs.current.find((s) => (s.site = site));
+  //Downloads retrieved unviewd shots -- will need one that seeks db for all unvieweds shots. -- should be done?
+  const handleDownloadTimePeriod = useCallback(
+    async ({ from, to }: timePeriod) => {
+      //can keep operational -- as users, from relogging into the last viewed Id, may want to download from there upwards of the scroll
+      try {
+        const timeProps = { timePeriod: { from, to }, site };
+        const { error: e1, dShotData: dSD } = await getDbShotKeys(timeProps);
+        if (e1) throw { error: e1 };
 
-      if (!swiperRef)
-        throw { error: "swiperRef unintialised", swiperRef, swiperRefs };
-      if (!siteShots?.length)
-        throw { error: "No shots found", shotsLength: siteShots?.length };
+        const tPromises = dSD.map((d) =>
+          getDownloadCache({ key: d.shotKey, date: d.date }),
+        );
+        const tShots = await Promise.all(tPromises);
+        const { error } = await download(tShots);
+        if (error) throw { error };
+      } catch (e) {
+        console.error("in handleDownloadTimePeriod: ", e);
+      }
+    },
+    [],
+  );
 
-      const oldShots = siteShots
-        .slice(0, swiperRef.swiper.activeIndex)
-        .map((s) => ({ ...s.file, date: s.date }));
+  const handleDownloadCurrentShotAndAfter = useCallback(
+    async ({ id, local }: handleDownload) => {
+      //id: defined when passed from Context Menu;
+      try {
+        id = id ? id - 1 : selectedShots.at(0)?.id! - 1; //will throw if undefined
 
-      const { error } = await download(oldShots);
-    } catch (e) {
-      console.error("in downloadShotsBeforeCurrent: ", JSON.stringify(e));
-    }
-  }, [siteShots]);
+        //get shotKeys from localShots and then binary data
+        if (local) {
+          const cSD = siteShots?.filter((s) => s.id > id!)!;
+          const cPromise = cSD.map((c) =>
+            getDownloadCache({ key: c.shotKey, date: c.date }),
+          );
+          const cShots = await Promise.all(cPromise);
+          const { error: e1 } = await download(cShots);
+          if (e1) throw e1;
+        } else {
+          //get shotKeys from db and then binary data
+          const cProp = { site, cursor: { id, next: true } };
+          const { error: e2, dShotData } = await getDbShotKeys(cProp);
+          if (e2) throw e2;
 
-  //HandleDelShot -- handles del in both gallery and selectedViewer
-  const handleDeleteShot = useCallback(async ({ ids }: delShotType) => {
-    try {
-      ids = Array.isArray(ids) ? ids : [ids];
+          const cPromise = dShotData.map((c) =>
+            getDownloadCache({ key: c.shotKey, date: c.date }),
+          );
+          const cShots = await Promise.all(cPromise);
+          const { error: e3 } = await download(cShots);
+          if (e3) throw e3;
+        }
+      } catch (e) {
+        console.error("in downloadCurrentShotsAndAfter: ", JSON.stringify(e));
+      }
+    },
+    [siteShots],
+  );
 
-      setDelCount(ids.length);
-      const { error } = await mutateDel(ids); //calls mutateShots fn
-      if (error) throw error;
+  const handleDownloadCurrentShotAndBefore = useCallback(
+    async ({ id, local }: handleDownload) => {
+      try {
+        id = id ? id + 1 : selectedShots.at(0)?.id! + 1; //will throw if undefined
 
-      // delReset(); //sets errors to zero null unneeded;
-    } catch (e: any) {
-      console.error("in handleDeleteShot: ", e);
-      //setError -- timeOut
-    }
-  }, []);
+        //get shotKeys from loadedShots and then binary, else dbShots then binary.
+        if (local) {
+          const cSD = siteShots?.filter((s) => s.id < id!)!;
+          const cPromise = cSD.map((c) =>
+            getDownloadCache({ key: c.shotKey, date: c.date }),
+          );
+          const cShots = await Promise.all(cPromise);
+          const { error: e1 } = await download(cShots);
+          if (e1) throw e1;
+        } else {
+          const cProp = { site, cursor: { id, next: false } };
+          const { error: e2, dShotData } = await getDbShotKeys(cProp);
+          if (e2) throw e2;
+
+          const cPromise = dShotData.map((c) =>
+            getDownloadCache({ key: c.shotKey, date: c.date }),
+          );
+          const cShots = await Promise.all(cPromise);
+          const { error: e3 } = await download(cShots);
+          if (e3) throw e3;
+        }
+      } catch (e) {
+        const e0 = "in downloadCurrentShotAndBefore: ";
+        console.error(e0, JSON.stringify(e));
+      }
+    },
+    [siteShots],
+  );
 
   return (
     <main className="flex flex-1 flex-col lg:flex-row">
       {/* Loading State */}
       {(shotsLoading || shotsRefetching) &&
-        !siteShots?.length && ( //will not wok for shotsRefetching as siteShots is defined.
+        !siteShots?.length && ( //will not work for shotsRefetching as siteShots is defined.
           <div className="flex flex-1 items-center justify-center">
             <div className="flex flex-col items-center gap-4">
               <Loader2 className="text-primary h-8 w-8 animate-spin" />
@@ -355,7 +516,7 @@ export default function Shots({
         <div className="flex flex-1 items-center justify-center p-8">
           <div className="text-center">
             <h2 className="text-xl font-semibold">No shots here</h2>
-            <p className="text-muted-foreground mt-2">Schedule one!</p>
+            <p className="text-muted-foreground mt-2">Schedule one?</p>
             <Button className="mt-4" onClick={onAddSite}>
               Set Cron
             </Button>
@@ -377,7 +538,7 @@ export default function Shots({
               <SelectedViewer
                 shot={openedShot}
                 onClose={() => setOpenedShot(undefined)}
-                getPrevShot={getPrevShot}
+                getDownloadCache={getDownloadCache}
                 onDeleteShot={handleDeleteShot}
               />
             </motion.div>
@@ -393,11 +554,13 @@ export default function Shots({
                 site={site || ""}
                 openedShot={openedShot}
                 onOpenedShot={setOpenedShot}
-                preserveScroll={preserveScroll}
                 onDeleteShot={handleDeleteShot}
+                preserveScroll={preserveScroll}
                 delSelectedShots={deleteSelectedShots}
                 downloadSelectedShots={downloadSelectedShots}
                 viewSelectedShots={viewSelectedShots}
+                selectedShots={selectedShots}
+                onSelectedShots={onSelectedShots}
               />
             </motion.div>
           </div>
@@ -435,6 +598,8 @@ export default function Shots({
                 delSelectedShots={deleteSelectedShots}
                 downloadSelectedShots={downloadSelectedShots}
                 viewSelectedShots={viewSelectedShots}
+                selectedShots={selectedShots}
+                onSelectedShots={onSelectedShots}
               />
             </motion.div>
 
@@ -447,7 +612,7 @@ export default function Shots({
               <SelectedViewer
                 shot={openedShot}
                 onClose={() => setOpenedShot(undefined)}
-                getPrevShot={getPrevShot}
+                getDownloadCache={getDownloadCache}
                 onDeleteShot={handleDeleteShot}
               />
             </motion.div>

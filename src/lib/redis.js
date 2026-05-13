@@ -7,14 +7,14 @@ export const logRate = new Ratelimit({
   redis,
   analytics: true,
   limiter: Ratelimit.slidingWindow(10, "1 h"),
-  prefix: "shooter:loglimit",
+  prefix: "shooter:logLimit",
 });
 
 export const delAccountRate = new Ratelimit({
   redis,
   analytics: true,
   limiter: Ratelimit.slidingWindow(3, "1 h"),
-  prefix: "shooter:loglimit",
+  prefix: "shooter:delLimit",
 });
 
 export const sessionRate = new Ratelimit({

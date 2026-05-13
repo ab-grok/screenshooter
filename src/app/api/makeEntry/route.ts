@@ -11,14 +11,15 @@ export async function POST(req: Request) {
 
     const { payload } = await jose.jwtVerify(token, secret);
 
-    const { site, user, ...rest } = await req.json();
-    if (!user || !site) throw { error: "Missing parameters from worker call" };
+    const shotData = await req.json();
+    if (!shotData.user || !shotData.site) throw "Missing shotData params!";
 
-    const { error } = await makeEntry({ ...rest, site, user });
+    //shotData : {htmlKey, shotKey, user, site, range, id}
+    const { error } = await makeEntry(shotData);
     if (error) throw { error };
   } catch (e) {
     const msg = `Error in makeEntry API: ${JSON.stringify(e)}`;
     const msgData = { msg, danger: true };
-    await setNotification({ msgData, postAdmin: true });
+    await setNotification({ msgData, logError: true });
   }
 }

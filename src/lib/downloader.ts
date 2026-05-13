@@ -7,6 +7,7 @@ type downloader = {
   openInNewTab: (file: file | file[]) => Promise<{ error: any }>;
 };
 
+//does the download add the extension or I do that manually?
 export function useDownloader(): downloader {
   async function download(file: file | file[]) {
     try {
@@ -20,7 +21,7 @@ export function useDownloader(): downloader {
           i == 0 && (name = formatDate(f.date!));
           i == file.length - 1 && (name += " - " + formatDate(f.date!));
 
-          zip.file(f.fileName, createBlob(f));
+          zip.file(f.fileName, createBlob(f)); //I reckon this doesn't need the explicit Blob and even allows up to ArrayBufferLike (seen in ts doc)?
         });
         content = await zip.generateAsync({ type: "blob" });
       } else content = createBlob(file);
@@ -35,31 +36,33 @@ export function useDownloader(): downloader {
       return { error: null };
     } catch (e) {
       //set Error notification;
-      console.error("Error downloading file(s):", e);
-      return { error: e };
+      console.error("Error in useDownloader ", e);
+      return { error: "Error in useDownloader " + e };
     }
   }
 
   async function openInNewTab(file: file | file[]) {
     try {
       if (Array.isArray(file)) {
-        file.forEach((f) => {
+        file.forEach((f, i) => {
           setTimeout(() => {
             const content = createBlob(f);
             const url = URL.createObjectURL(content);
             window.open(url, "_blank");
-          }, 500);
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+          }, i * 100);
         });
       } else {
         const content = createBlob(file);
         const url = URL.createObjectURL(content);
         window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
       }
       return { error: null };
     } catch (e) {
       //set error notification
       console.error("Error opening file(s): ", e);
-      return { error: e };
+      return { error: "Error in useDownloader " + e };
     }
   }
 
@@ -69,12 +72,9 @@ export function useDownloader(): downloader {
 function createBlob(file: file) {
   const { fileType: type, fileData: data } = file;
 
-  if (typeof data == "string" && type != "text/plain") {
-    const buffer = Buffer.from(data, "base64"); //gets array buffer
-
+  if (data instanceof Uint8Array) {
+    const buffer = Buffer.from(data);
     return new Blob([buffer], { type });
-  } else {
-    //assume UintArray or plain text
-    return new Blob([data], { type });
   }
+  return new Blob([data], { type });
 }

@@ -2,12 +2,16 @@
 
 import {
   delShot,
+  getR2Html,
+  getR2Shot,
   getShots,
   getSites,
+  getUserData,
   setViewed,
   shotProp,
 } from "@/lib/actions";
-import { shot, shotData, siteData } from "@/lib/types";
+import { getCrons } from "@/lib/server";
+import { shotData, shots, siteData, userData } from "@/lib/types";
 import {
   InfiniteData,
   useInfiniteQuery,
@@ -16,22 +20,25 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-//Optimistically Deletes ids from shots and will trigger shots update, then runs delShot();
+//Optimistically Deletes shots:idArray from useQuery data (which triggers UX update), then runs delShot (deleting from db);
 export function useMutateDel(site: string) {
+  //Do I initialise queryClient per function or once at top of page ?
   const queryClient = useQueryClient();
 
   const mutateShot = useMutation<
-    { error: null },
+    { error: string | null },
     { error: string },
     number[],
     { prevData: any }
   >({
-    mutationFn: async (ids) => await delShot({ ids }),
+    //ids passed on invoke
+    mutationFn: async (ids) => await delShot({ ids, site }), //returns {error} -- confirm error checking is useMutateDel.error!
     onMutate: async (ids) => {
-      await queryClient.cancelQueries({ queryKey: [site, "shots"] });
+      await queryClient.cancelQueries({ queryKey: [site, "shots"] }); //Cancel in-flight fetches
       const prevData = await queryClient.getQueryData([site, "shots"]);
 
-      queryClient.setQueryData<InfiniteData<shotData, unknown>>(
+      // queryClient.setQueryData<InfiniteData<shots, { id: any; next: boolean }>> -- this is the correct typing for TPageParam but I reckon 'unknown' is inconsequential?
+      queryClient.setQueryData<InfiniteData<shots, unknown>>(
         [site, "shots"],
         (oldData) => {
           if (!oldData) return oldData;
@@ -39,28 +46,92 @@ export function useMutateDel(site: string) {
             ...oldData,
             pages: oldData.pages.map((page) => ({
               ...page,
-              shots: page.shots.filter((s) => !ids.includes(s.id)),
+              shots: page.shotsData.filter((s) => !ids.includes(s.id)),
             })),
           };
         },
       );
 
-      return { prevData };
+      return { prevData }; //Is available in context to reset data db request error after optimistic update;
     },
-    onError: (err, variable, context) => {
+    onError: (err, ids, context) => {
       queryClient.setQueryData([site, "shots"], context?.prevData);
       return err;
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: [site, "shots"] });
+      queryClient.invalidateQueries({ queryKey: [site, "shots"] }); //why invalidateQueries()?
     },
   });
 
   return {
-    mutateDelErr: mutateShot.error?.error ?? mutateShot.error,
+    mutateDelErr: mutateShot.error,
+    //mutateDelErr reads as ```(property) mutateDelErr: {
+    // error: string;
+    //} | null
+    //```
+    //But delShot returns {error} which I reckon is referenced by mutateShot. Or is there a default second error nesting made by mutateshot?
     mutatingDel: mutateShot.isPending,
     delReset: mutateShot.reset,
     mutateDel: mutateShot.mutateAsync,
+  };
+}
+
+export function useMutateShotBinary(site: string) {
+  //DEL: Run in a loop to fetch shots one by one fitting vercel serverless fn 4.5mb payload limit;
+  //Checks that passed key is not in cache before fetching -- good
+  const queryClient = useQueryClient();
+
+  const mutateShotBin = useMutation<
+    { shotBin: Uint8Array; shotKey: string },
+    { error: string },
+    { shotKey: string }
+  >({
+    mutationFn: async ({ shotKey }) => {
+      const { shotBin } = await getR2Shot(shotKey);
+      return { shotBin, shotKey };
+    },
+    onSuccess: ({ shotBin, shotKey }) => {
+      queryClient.setQueryData<any>([site, "downloadShots"], (prev = {}) => ({
+        ...prev,
+        [shotKey]: shotBin,
+      }));
+    },
+  });
+
+  return {
+    shotBinary: mutateShotBin.data,
+    getShotBinary: mutateShotBin.mutateAsync,
+    shotBinaryError: mutateShotBin.error,
+  };
+}
+
+export function useMutateHtml(site: string) {
+  const queryClient = useQueryClient();
+
+  const mutateHtml = useMutation<
+    { html: string; htmlKey: string },
+    { error: string },
+    { htmlKey: string }
+  >({
+    mutationFn: async ({ htmlKey }) => {
+      const { html } = await getR2Html(htmlKey);
+      return { html, htmlKey };
+    },
+    onSuccess: ({ html, htmlKey }) => {
+      queryClient.setQueryData<Record<string, string>>(
+        [site, "html"],
+        (prev) => ({
+          ...prev,
+          [htmlKey]: html,
+        }),
+      );
+    },
+  });
+
+  return {
+    html: mutateHtml.data,
+    getHtml: mutateHtml.mutateAsync,
+    htmlError: mutateHtml.error,
   };
 }
 
@@ -79,7 +150,7 @@ export function useMutateViewed(site: string) {
       await queryClient.cancelQueries({ queryKey: [site, "shots"] });
       const prevData = await queryClient.getQueryData([site, "shots"]);
 
-      queryClient.setQueryData<InfiniteData<shotData, unknown>>(
+      queryClient.setQueryData<InfiniteData<shots, unknown>>(
         [site, "shots"],
         (oldData) => {
           if (!oldData) return oldData;
@@ -87,7 +158,7 @@ export function useMutateViewed(site: string) {
             ...oldData,
             pages: oldData.pages.map((page) => ({
               ...page,
-              shots: page.shots.map((s: shot) =>
+              shots: page.shotsData.map((s: shotData) =>
                 ids.includes(s.id) ? { ...s, viewed: true } : s,
               ),
             })),
@@ -122,9 +193,9 @@ export function useMutateSites() {
 //Updating viewed per shot in other function, and then, also set state to viewed in client state. -- run refetch to check change speed (expensive).
 export function useQueryShots(site: string) {
   const shotQuery = useInfiniteQuery<
-    shotData,
+    shots,
     string,
-    InfiniteData<shotData>,
+    InfiniteData<shots>,
     [string, string],
     { id: any; next: boolean }
   >({
@@ -132,8 +203,8 @@ export function useQueryShots(site: string) {
     queryFn: async ({ pageParam }) => {
       const { id, next } = pageParam;
       //when error: all props besides error will be null;
-      const shotData = await getShots({ id, next, site });
-      return shotData;
+      const shots = await getShots({ id, next, site });
+      return shots;
     },
     getNextPageParam: (lastPage) => ({
       id: lastPage.nextCursor,
@@ -148,25 +219,58 @@ export function useQueryShots(site: string) {
   });
 
   return {
-    shotsFetching: shotQuery.isFetching, //(true for any request ) -- fetchingNextShots suffices for that.
-    shotsRefetching: shotQuery.isRefetching,
-    shotsLoading: shotQuery.isLoading,
+    shots: shotQuery.data,
     shotsError: shotQuery.error,
+    shotsLoading: shotQuery.isLoading,
+    shotsFetching: shotQuery.isFetching, //(true for any request ) -- fetchingNext/PrevShots suffices for that.
+    shotsRefetching: shotQuery.isRefetching,
     fetchNextShots: shotQuery.fetchNextPage,
     fetchPrevShots: shotQuery.fetchPreviousPage,
     fetchingNextShots: shotQuery.isFetchingNextPage,
     fetchingPrevShots: shotQuery.isFetchingPreviousPage,
-    shots: shotQuery.data,
     shotsRefetch: shotQuery.refetch,
+  };
+}
+
+export function useQueryCrons() {
+  const cronsQuery = useQuery<
+    { crons: Array<{ cron: string }> },
+    { error: string }
+  >({
+    queryKey: ["sites"],
+    queryFn: async () => {
+      const { crons } = await getCrons();
+      return { crons };
+    },
+    staleTime: Infinity,
+  });
+
+  return {
+    cronsLoading: cronsQuery.isLoading,
+    cronsError: cronsQuery.error,
+    crons: cronsQuery.data,
+    cronsFetching: cronsQuery.isFetching,
+    cronsRefetch: cronsQuery.refetch,
+  };
+}
+
+export function useUserData() {
+  const userQuery = useQuery<userData, { error: string }>({
+    queryKey: ["userData"],
+    queryFn: async () => await getUserData(),
+    staleTime: Infinity,
+  });
+
+  return {
+    userData: userQuery.data,
+    userDataError: userQuery.error,
+    userDataLoading: userQuery.isLoading,
   };
 }
 
 export function useQuerySites() {
   //isFetching = true when fetching in background.
-  const { isLoading, error, data, isFetching, refetch } = useQuery<
-    siteData[],
-    string
-  >({
+  const sitesQuery = useQuery<siteData[], string>({
     queryKey: ["sites"],
     queryFn: async () => {
       const userSites = (await getSites()).userSites as siteData[];
@@ -176,10 +280,10 @@ export function useQuerySites() {
   });
 
   return {
-    sitesLoading: isLoading,
-    sitesError: error,
-    sites: data,
-    sitesFetching: isFetching,
-    sitesRefetch: refetch,
+    sitesLoading: sitesQuery.isLoading,
+    sitesError: sitesQuery.error,
+    sites: sitesQuery.data,
+    sitesFetching: sitesQuery.isFetching,
+    sitesRefetch: sitesQuery.refetch,
   };
 }

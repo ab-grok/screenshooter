@@ -3,56 +3,82 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Navbar } from "@/components/Navbar";
-import { optimisticUnvieweds, shot, siteData, unviewedType } from "@/lib/types";
-import { useQuerySites } from "./reactquery";
+import {
+  handleDownload,
+  optimisticUnvieweds,
+  selectedShot,
+  siteData,
+  timePeriod,
+  unviewedType,
+  userData,
+} from "@/lib/types";
+import { useQuerySites, useUserData } from "./reactquery";
 import Shots from "@/components/Shots";
 import { usePreserveScroll } from "@/lib/usePreserveScroll";
 
 export default function HomePage() {
-  // const [error, setError] = useState<string | null>(null); //Replaced by useQuerySites.sitesError
-  const [selectedSite, setSelectedSite] = useState<siteData>(); //unlogged users have no sites, if selectedSite = undefined set to visitor site/cnn.com
+  const { userData, userDataError, userDataLoading } = useUserData(); //when !userData these dont work: delete*, viewSelectedShots, handleAddSite
+  // const [userData, setUserData] = useState<userData>(); //will serve as logged indicator and display user info: create type
+
+  const [selectedSite, setSelectedSite] = useState<siteData>(); //unlogged users have no sites, if selectedSite = undefined set to visitor site/cnn.com; account for site active state
   const [refreshingSites, setRefreshingSites] = useState<string>(); //when manual loading getShots
 
-  //used boolean but needed to pass setter to consumer to get false after execution.
-  // -- Instead can use a random string, which changes per invokation -- will still trigger the state and needs not be false;
+  //States are triggered using Math.random()
+  const [selectedShots, setSelectedShots] = useState([] as selectedShot[]); //moved from gallery -- will use in navbar for disable "download selected shots" button and also for download selectedShots
   const [deleteSelectedShots, setDeleteSelectedShots] = useState(0);
   const [viewSelectedShots, setViewSelectedShots] = useState(0);
-  const [downloadSelectedShots, setDownloadSelectedShots] = useState(0);
-  const [downloadShotsBeforeCurr, setDownloadShotsBeforeCurr] = useState(0);
-  const [downloadCurrAndNewShots, setDownloadCurrAndNewShots] = useState(0);
-  const [downloadlocalUnviewed, setDownloadLocalUnviewed] = useState(0); //downloads from rendered shots
-  const [downloaddbUnviewed, setDownloaddbUnviewed] = useState(0);
-  const [userData, setUserData] = useState<userData>(); //will serve as logged indicator and display user info: create type
-  // const localUnviewed = useRef<shot[]|null>(null) //Updates on shots mod -- useRef non-reactive will be render glitch free for passing to navbar (than shots)
+  const [downloadSelectedShots, setDownloadSelectedShots] = useState(0); //pass keys to mutateDownload
+  const [downloadCurrShotAndBefore, setDownloadCurrShotAndBefore] = useState(
+    {} as handleDownload,
+  );
+  const [downloadCurrShotAndAfter, setDownloadCurrShotAndAfter] = useState(
+    {} as handleDownload,
+  );
+  const [downloadUnviewedAfterCurr, setDownloadUnviewedAfterCurr] = useState(
+    {} as handleDownload,
+  );
+  const [downloadUnviewedBeforeCurr, setDownloadUnviewedBeforeCurr] = useState(
+    {} as handleDownload,
+  );
+  const [downloadTimePeriod, setDownloadTimePeriod] = useState(
+    {} as timePeriod,
+  );
 
   const preserveScroll = usePreserveScroll(); // passed down to shots>gallery
   const { sitesLoading, sitesError, sitesRefetch, sites } = useQuerySites(); //sitesRefetch => {data, error, isError, isSuccess}
 
-  //stores db unvieweds for all sites. Is altered in Shots when shot is viewed or deleted -- no need for local but still can count local unvieweds and expose on dlLocalUnviewed
-  const [allUnvieweds, setAllUnvieweds] = useState([] as unviewedType[]);
-  const [localUnviewed, setlocalUnviewed] = useState(0);
+  //stores db unvieweds for all sites. Is altered in Shots.tsx when shot is viewed or deleted -- no need for local but still can count local unvieweds and expose on dlLocalUnviewed
+  const [allSitesUnvieweds, setAllSitesUnvieweds] = useState(
+    [] as unviewedType[],
+  );
+  const [localUnviewed, setlocalUnviewed] = useState<number[]>(); //shotIds[]
 
-  const thisUnvieweds = allUnvieweds.find((s) => s.site == selectedSite?.site);
+  const currId = useMemo(() => {
+    if (!selectedShots) return { first: 0, last: 0 };
+    //get from selectedShot. will be the first and last selected (for including middle shots in the calc)
+    const first = selectedShots[0].id;
+    const last = selectedShots.at(-1)?.id;
 
-  //recomputes per site or allUnviewed.unvieweds change -- useMemo prevents irrelevant recomputes from comp rerenders and other allUnviewed change
-  //pass to navBar
-  const selectedDbUnviewed = useMemo(() => {
-    return thisUnvieweds;
-  }, [selectedSite?.site, thisUnvieweds?.unvieweds]);
+    return { first, last };
+  }, [selectedShots]);
 
   // called in shots change effect
-  const handleAllUnvieweds = useCallback(
-    ({ delCount, allUnvieweds }: optimisticUnvieweds) => {
-      setAllUnvieweds((prev) => {
-        return delCount
+  const handleAllSitesUnvieweds = useCallback(
+    ({ delIds, allSitesUnvieweds }: optimisticUnvieweds) => {
+      setAllSitesUnvieweds((prev) => {
+        const siteUnvieweds = prev.find((p) => p.site == selectedSite?.site)!;
+        return delIds?.length
           ? [
+              //if delIds: subtract delIds from the previous unvieweds count
               ...prev.filter((s) => s.site != selectedSite?.site),
               {
-                ...thisUnvieweds!,
-                unvieweds: thisUnvieweds!.unvieweds - delCount,
+                ...siteUnvieweds,
+                unvieweds:
+                  siteUnvieweds?.unvieweds.filter((s) => !delIds.includes(s)) ||
+                  [],
               },
             ]
-          : allUnvieweds!;
+          : allSitesUnvieweds!;
       });
     },
     [],
@@ -72,7 +98,7 @@ export default function HomePage() {
   //       return;
   //     }
 
-  //     setAllUnvieweds((unvArr) => {
+  //     setAllSitesUnvieweds((unvArr) => {
   //       const site = selectedSite.site;
   //       const thisUnv = unvArr.find((u) => u.site == site);
   //       if (!thisUnv || thisUnv.unvieweds! < 1)
@@ -105,25 +131,25 @@ export default function HomePage() {
   //   let cancel = false; //will stop assignment if effect refires during fetch.
 
   //   (async () => {
-  //     const { sitesUnvieweds: dbUnv, error } = await getUnviewedCount(); //queries db -- need rateLimit?
+  //     const { sitesUnvieweds: dbUnv, error } = await getUnviewedIds(); //queries db -- need rateLimit?
   //     if (error || !dbUnv) {
   //       console.error("in Homepage, unviewedCount: ", error, dbUnv);
   //       return;
   //     }
 
   //     if (cancel) return;
-  //     const thisUnvieweds = dbUnv.find((u) => u.site == selectedSite.site);
+  //     const siteUnvieweds = dbUnv.find((u) => u.site == selectedSite.site);
 
   //     requestAnimationFrame(() => {
-  //       if (unvieweds?.unvieweds == thisUnvieweds?.unvieweds) return;
-  //       setAllUnvieweds(dbUnv!);
+  //       if (unvieweds?.unvieweds == siteUnvieweds?.unvieweds) return;
+  //       setAllSitesUnvieweds(dbUnv!);
   //     });
   //   })();
 
   //   return () => {
   //     cancel = true;
   //   };
-  // }, [selectedSite, sites, unvieweds?.unvieweds]); //potential loop: why use unvieweds -- unvieweds recomputes when setAllUnvieweds and this setsAllUnvieweds
+  // }, [selectedSite, sites, unvieweds?.unvieweds]); //potential loop: why use unvieweds -- unvieweds recomputes when setAllSitesUnvieweds and this setsallSitesUnvieweds
 
   //----> WILL USE sites and siteLoading as is, no need for useEffect for setSites
 
@@ -213,21 +239,24 @@ export default function HomePage() {
     <div className="bg-background flex min-h-screen flex-col">
       {/* Navbar */}
       <Navbar
+        //create contextMenu for these functions in Shots > gallery
         sites={sites}
         selectedSite={selectedSite}
         onSelectSite={handleSelectSite}
         sitesLoading={sitesLoading}
         handleRefresh={handleRefresh}
         onAddSite={handleAddSite}
-        allUnvieweds={allUnvieweds}
-        //create contextMenu for these functions in Shots > gallery
-        selectedDbUnviewed={selectedDbUnviewed}
+        allSitesUnvieweds={allSitesUnvieweds}
         localUnviewed={localUnviewed}
-        onDownloadCurrAndNewShots={setDownloadCurrAndNewShots}
-        onDownloadShotsBeforeCurr={setDownloadShotsBeforeCurr}
+        onDownloadTimePeriod={setDownloadTimePeriod}
+        userData={userData}
+        currId={currId}
+        // setSelectedShots={setSelectedShots} // will need this to unselect all shots
         onDownloadSelectedShots={setDownloadSelectedShots}
-        onDownloadLocalUnviewed={setDownloadLocalUnviewed}
-        onDownloaddbUnviewed={setDownloaddbUnviewed}
+        onDownloadCurrShotAndAfter={setDownloadCurrShotAndAfter}
+        onDownloadCurrShotAndBefore={setDownloadCurrShotAndBefore}
+        onDownloadUnviewedAfterCurr={setDownloadUnviewedAfterCurr}
+        onDownloadUnviewedBeforeCurr={setDownloadUnviewedBeforeCurr}
         onDeleteSelectedShots={setDeleteSelectedShots}
         onSelectedShotsViewed={setViewSelectedShots}
       />
@@ -238,15 +267,18 @@ export default function HomePage() {
         site={selectedSite?.site || ""}
         onAddSite={handleAddSite}
         preserveScroll={preserveScroll}
-        downloaddbUnviewed={downloaddbUnviewed}
-        downloadlocalUnviewed={downloadlocalUnviewed}
-        downloadCurrAndNewShots={downloadCurrAndNewShots}
-        downloadShotsBeforeCurr={downloadShotsBeforeCurr}
-        downloadSelectedShots={downloadSelectedShots}
         deleteSelectedShots={deleteSelectedShots}
+        downloadTimePeriod={downloadTimePeriod}
+        downloadUnviewedAfterCurr={downloadUnviewedAfterCurr} //pass 'local' to download local unvieweds else db;
+        downloadUnviewedBeforeCurr={downloadUnviewedBeforeCurr} //as above
+        downloadCurrShotAndAfter={downloadCurrShotAndAfter} //from navbar; selectedShot must be defined here no need for id
+        downloadCurrShotAndBefore={downloadCurrShotAndBefore}
+        selectedShots={selectedShots}
+        downloadSelectedShots={downloadSelectedShots}
         viewSelectedShots={viewSelectedShots}
         onlocalUnviewed={setlocalUnviewed}
-        onAllUnvieweds={handleAllUnvieweds}
+        onAllSitesUnvieweds={handleAllSitesUnvieweds}
+        onSelectedShots={setSelectedShots}
       />
 
       {/* Footer gradient accent */}

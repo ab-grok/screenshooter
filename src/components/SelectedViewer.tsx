@@ -20,14 +20,19 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDate } from "@/lib/dateformatter";
-import type { delShotType, shot } from "@/lib/types";
+import type {
+  delShotType,
+  file,
+  getDownloadCache,
+  shotData,
+} from "@/lib/types";
 import { useDownloader } from "@/lib/downloader";
 
 interface SelectedViewerProps {
-  shot: shot | undefined;
+  shot: shotData | undefined;
   onClose?: () => void;
-  getPrevShot: (id: number) => shot | undefined;
   onDeleteShot: ({ ids }: delShotType) => void;
+  getDownloadCache: ({ key, date, isHtml }: getDownloadCache) => Promise<file>;
 }
 
 type cursorPos = {
@@ -38,35 +43,19 @@ type cursorPos = {
 export function SelectedViewer({
   shot,
   onClose,
-  getPrevShot,
   onDeleteShot,
+  getDownloadCache,
 }: SelectedViewerProps) {
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<"image" | "html">("image");
+  const [html, setHtml] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null); //use to set pan logic -- where the user moves around the zoom object
   const { download, openInNewTab } = useDownloader();
   const [mouseOffset, setMouseOffset] = useState<cursorPos | null>(null);
   const mouseInit = useRef({ x: 0, y: 0 });
-
-  const shotFile = useMemo(() => {
-    try {
-      const { fileData: data, fileType: type } = shot?.file!;
-      if (type == "text/plain") {
-        //when type is text, shot is duplicate, data is id of original shot.
-        const { file } = getPrevShot(Number(data))!; //May be undefined: return a stock image then.
-        if (file) return { data: file.fileData, type: file.fileType };
-        else return { data, type }; //else some generic image as {fileData, fileType}
-      }
-      return { data, type };
-    } catch (e) {
-      console.error("in SelectedViewer shotFile: ", e);
-      return null;
-      //setError?
-    }
-  }, [getPrevShot, shot]);
 
   //trackts cursor position for zoom dragging
   useEffect(() => {
@@ -200,24 +189,54 @@ export function SelectedViewer({
     };
   }, []);
 
+  //Retrieve Html when the user clicks on the html tab
+  useEffect(() => {
+    if (html || !(activeTab == "html")) return;
+    (async () => {
+      setHtml(await getHtml());
+    })();
+  }, [activeTab]);
+
   const handleDownload = useCallback(async () => {
     if (!shot) return;
+    const prop = { key: shot.shotKey, date: shot.date };
+    const file = await getDownloadCache(prop);
 
-    const { error } = await download({ ...shot.file, date: shot.date });
+    const { error } = await download(file);
     if (error) {
       console.error("In handleDowwnload. Download failed: ", error);
     }
   }, [shot]);
 
+  const getHtml = useCallback(async () => {
+    if (!shot) return "";
+    const prop = { key: shot.htmlKey, date: shot.date, isHtml: true };
+    const file = await getDownloadCache(prop);
+    if (file) return file.fileData as string;
+    return "";
+  }, [shot]);
+
   const handleCopyHtml = useCallback(async () => {
-    if (!shot) return;
+    if (!html) return;
     try {
-      await navigator.clipboard.writeText(shot.html);
+      await navigator.clipboard.writeText(html);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       console.error("in handleCopyHtml. Failed to copy HTML:", error);
     }
+  }, [html]);
+
+  const shotUrl = useMemo(() => {
+    return shot?.shotUrl!;
+    // const { fileData: data, fileType: type } = shot?.file!;
+    // if (type == "text/plain") {
+    //   //when type is text, shot is duplicate, data is id of original shot.
+    //   const { file } = getPrevShot(Number(data))!; //May be undefined: return a stock image then.
+    //   if (file) return { data: file.fileData, type: file.fileType };
+    //   else return { data, type }; //else some generic image as {fileData, fileType}
+    // }
+    // return { data, type };
   }, [shot]);
 
   const MotionImg = motion(Image);
@@ -319,6 +338,7 @@ export function SelectedViewer({
 
           {/* Add delete button */}
 
+          {/* Download button */}
           <Button
             variant="ghost"
             size="icon"
@@ -379,11 +399,7 @@ export function SelectedViewer({
               >
                 <MotionImg
                   ref={imageRef}
-                  src={
-                    shotFile
-                      ? `data:${shotFile.type};base64,${shotFile.data}`
-                      : `/shot_placeholder.png`
-                  }
+                  src={shotUrl || ""}
                   alt={`Shot from ${formatDate(shot.date)}`}
                   className="max-w-full rounded-lg shadow-lg transition-transform duration-200"
                   initial={{ scale: 0.95, opacity: 0 }}
@@ -415,7 +431,7 @@ export function SelectedViewer({
             >
               <ScrollArea className="h-full">
                 <pre className="text-muted-foreground p-4 font-mono text-xs leading-relaxed">
-                  <code>{shot.html}</code>
+                  <code>{html}</code>
                 </pre>
               </ScrollArea>
             </motion.div>

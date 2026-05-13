@@ -1,7 +1,7 @@
 // components/Navbar.tsx
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -22,49 +22,82 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { SitesTab } from "./SitesTab";
-import type { siteData, unviewedType } from "@/lib/types";
+import type {
+  handleDownload,
+  siteData,
+  timePeriod,
+  unviewedType,
+  userData,
+} from "@/lib/types";
 import Image from "next/image";
 
 interface NavbarProps {
+  sitesLoading: boolean;
   sites: siteData[] | undefined;
   selectedSite: siteData | undefined;
-  allUnvieweds: unviewedType[];
-  selectedDbUnviewed?: unviewedType;
-  localUnviewed: number;
-  sitesLoading: boolean;
+  allSitesUnvieweds: unviewedType[];
+  localUnviewed: number[] | undefined;
+  userData: userData | undefined;
+  currId?: { first: number | undefined; last: number | undefined };
   onSelectSite: (site: siteData) => void;
   onAddSite: () => void;
   handleRefresh: () => void;
-  onDownloadLocalUnviewed: (n: number) => void;
-  onDownloadCurrAndNewShots: (n: number) => void;
-  onDownloadShotsBeforeCurr: (n: number) => void;
+  onDownloadCurrShotAndAfter: (n: handleDownload) => void;
+  onDownloadCurrShotAndBefore: (n: handleDownload) => void;
   onDownloadSelectedShots: (n: number) => void;
-  onDownloaddbUnviewed: (n: number) => void;
+  onDownloadUnviewedBeforeCurr: (n: handleDownload) => void;
+  onDownloadUnviewedAfterCurr: (n: handleDownload) => void;
+  onDownloadTimePeriod: (n: timePeriod) => void;
   onDeleteSelectedShots: (n: number) => void;
   onSelectedShotsViewed: (n: number) => void;
-  isLoggedIn?: boolean;
   // TODO: Add user info prop when auth is implemented
 }
 
 export function Navbar({
   sites,
-  selectedDbUnviewed,
-  allUnvieweds,
-  localUnviewed, //unvieweds from rendered shots -- used when downloading
+  currId,
+  userData,
+  allSitesUnvieweds,
+  localUnviewed, //shotIds[]
   selectedSite,
-  isLoggedIn,
   sitesLoading,
   onAddSite,
   onSelectSite,
-  onDownloadLocalUnviewed,
-  onDownloadCurrAndNewShots,
-  onDownloadShotsBeforeCurr,
+  onDownloadCurrShotAndAfter,
+  onDownloadCurrShotAndBefore,
   onDownloadSelectedShots,
-  onDownloaddbUnviewed,
+  onDownloadUnviewedBeforeCurr,
+  onDownloadUnviewedAfterCurr,
+  onDownloadTimePeriod,
   onDeleteSelectedShots,
   onSelectedShotsViewed,
 }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  //recomputes per site or allUnviewed.unvieweds change -- useMemo prevents irrelevant recomputes from component rerenders and other allUnviewed changes
+  const selectedSiteUnviewed = useMemo(() => {
+    return allSitesUnvieweds.find((s) => s.site == selectedSite?.site);
+  }, [selectedSite?.site, allSitesUnvieweds]);
+
+  const dbUnviewedCurrAndBefore = useMemo(() => {
+    const curr = (currId?.last || 0) + 1;
+    return selectedSiteUnviewed?.unvieweds.filter((s) => s < curr).length || 0;
+  }, [selectedSiteUnviewed]);
+
+  const dbUnviewedCurrAndAfter = useMemo(() => {
+    const curr = (currId?.first || 0) - 1;
+    return selectedSiteUnviewed?.unvieweds.filter((s) => s > curr).length || 0;
+  }, [selectedSiteUnviewed]);
+
+  const localUnviewedCurrAndAfter = useMemo(() => {
+    const curr = (currId?.first || 0) - 1;
+    return localUnviewed?.filter((s) => s > curr).length || 0;
+  }, [localUnviewed]);
+
+  const localUnviewedCurrAndBefore = useMemo(() => {
+    const curr = (currId?.last || 0) + 1;
+    return localUnviewed?.filter((s) => s < curr).length || 0;
+  }, [localUnviewed]);
 
   return (
     <motion.header
@@ -77,9 +110,11 @@ export function Navbar({
         <Link href="/" className="flex items-center gap-2">
           <div className="bg-primary/10 flex h-9 w-9 items-center justify-center rounded-lg">
             <Camera className="text-primary h-5 w-5" />
-            <Image src="/screenshooter.png" alt="ScreenShooter logo" />
+            <Image src="/webshooter.png" alt="WebShooter logo" />
           </div>
-          <span className="text-lg font-semibold tracking-tight">Shooter</span>
+          <span className="text-lg font-semibold tracking-tight">
+            Web Shooter
+          </span>
         </Link>
 
         {/* Desktop Navigation */}
@@ -89,9 +124,9 @@ export function Navbar({
             sites={sites}
             selectedSite={selectedSite}
             onSelectSite={onSelectSite}
-            allUnvieweds={allUnvieweds}
+            allSitesUnvieweds={allSitesUnvieweds}
             sitesLoading={sitesLoading}
-            selectedDbUnviewed={selectedDbUnviewed}
+            selectedSiteUnviewed={selectedSiteUnviewed}
             onAddNew={onAddSite}
           />
 
@@ -103,24 +138,36 @@ export function Navbar({
             </Link>
           </Button>
 
-          {(selectedDbUnviewed?.unvieweds || 0) > 0 && (
+          {(dbUnviewedCurrAndBefore || 0) > 0 && (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onDownloaddbUnviewed(Date.now())}
+              onClick={() =>
+                onDownloadUnviewedBeforeCurr({ unique: Date.now() })
+              }
               className="border-primary/50 text-primary hover:bg-primary/10 gap-2 bg-transparent"
             >
               <Download className="h-4 w-4" />
-              <span>Download {selectedDbUnviewed?.unvieweds} db unviewed</span>
+              <span>
+                Download{" "}
+                <span className="h-fit w-fit rounded-full bg-red-500 p-1 shadow-sm">
+                  {" "}
+                  {dbUnviewedCurrAndBefore}
+                </span>{" "}
+                db unviewed shots
+              </span>
             </Button>
           )}
+
+          {/* use DropDownMenu: Download Db shots > `23 shots after current` ; `34 shots before current`  */}
 
           {/* set download buttons */}
 
           {/* Auth Buttons */}
-          {!isLoggedIn ? (
+          {!userData ? (
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" asChild className="gap-2">
+                {/* Change to login component */}
                 <Link href="/login">
                   <LogIn className="h-4 w-4" />
                   <span>Log in</span>
@@ -134,7 +181,7 @@ export function Navbar({
               </Button>
             </div>
           ) : (
-            // TODO: Replace with UserControlsOverlay trigger
+            // TODO: Replace with UserControlsOverlay trigger : Can have notifications and delete account here;
             <Button variant="ghost" size="sm">
               Account
             </Button>
@@ -173,8 +220,8 @@ export function Navbar({
                   sites={sites}
                   selectedSite={selectedSite}
                   sitesLoading={sitesLoading}
-                  selectedDbUnviewed={selectedDbUnviewed}
-                  allUnvieweds={allUnvieweds}
+                  selectedSiteUnviewed={selectedSiteUnviewed}
+                  allSitesUnvieweds={allSitesUnvieweds}
                   onSelectSite={(site) => {
                     onSelectSite(site);
                     setIsMobileMenuOpen(false);
@@ -194,30 +241,36 @@ export function Navbar({
                   asChild
                   onClick={() => setIsMobileMenuOpen(false)}
                 >
+                  {/* change to cron component: popover, dialog, (implememting login as a component that pops right under the button on click -- is it a modal I need? What's the right component? ) */}
                   <Link href="/cron">
                     <Clock className="h-4 w-4" />
                     Cron Scheduler
                   </Link>
                 </Button>
 
-                {(selectedDbUnviewed?.unvieweds || 0) > 0 && (
+                {(dbUnviewedCurrAndBefore || 0) > 0 && (
                   <Button
                     variant="ghost"
                     className="text-primary justify-start gap-2"
                     onClick={() => {
-                      onDownloaddbUnviewed(Date.now());
+                      onDownloadCurrShotAndBefore({ unique: Date.now() });
                       setIsMobileMenuOpen(false);
                     }}
                   >
                     <Download className="h-4 w-4" />
-                    Download {selectedDbUnviewed?.unvieweds} db unviewed
+                    Download{" "}
+                    <span className="h-fit w-fit rounded-full bg-red-500 p-1 shadow-sm">
+                      {" "}
+                      {dbUnviewedCurrAndBefore}
+                    </span>{" "}
+                    db unviewed shots
                   </Button>
                 )}
               </div>
 
               {/* Auth Section */}
               <div className="border-border/50 flex flex-col gap-2 border-t pt-4">
-                {!isLoggedIn ? (
+                {!userData ? (
                   <>
                     <Button
                       variant="ghost"

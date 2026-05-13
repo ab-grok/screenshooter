@@ -13,16 +13,20 @@ import {
   deleteUser,
   safeRange,
   setSiteInactive,
-  undeleteUser,
+  cancelDeleteUser,
   safeSite,
   getSession,
   getUserShots,
   getVisitorShots,
   getUserSites,
   setShotViewed,
-  countUnviewedShots,
+  getUnviewedShotIds,
   deleteShot,
-  getDownloadShots,
+  getDownloadShotKeys,
+  getCrons,
+  getDownloadShot,
+  getHtml,
+  getActiveSites,
 } from "./server";
 import { delAccountRate, logRate, sessionRate } from "./redis.js";
 import {
@@ -30,15 +34,8 @@ import {
   encodeHexLowerCase,
 } from "@oslojs/encoding";
 import { sha256 } from "@oslojs/crypto/sha2";
-import {
-  delShotType,
-  downloadProps,
-  range,
-  selectedShot,
-  shot,
-  shotData,
-  userSites,
-} from "./types";
+import { downloadProps, range } from "./types";
+import * as jose from "jose";
 
 //---> session managment
 export async function getCookie(name: "session" | "analytics") {
@@ -46,13 +43,9 @@ export async function getCookie(name: "session" | "analytics") {
   return cookie;
 }
 
-async function setCookie(
-  name: "session" | "analytics",
-  value: string,
-  expires?: Date,
-) {
+async function setCookie({ name, cookie, expires }: setCookieProp) {
   try {
-    const cookie = (await cookies()).set(name, value, {
+    (await cookies()).set(name, cookie, {
       path: "/",
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -76,53 +69,56 @@ export async function validateSession() {
 
   const token = getToken(cookie)!;
 
-  const { user } = await getSession({ token });
+  const { user, joined, isAdmin } = await getSession({ token });
   if (!user) return { error: "Unknown user" };
 
   //rateLimit is used to renew cookie expiration
   const { success } = await sessionRate.limit(`user:${user}`);
 
-  //reset's expiry date to a month every 7 days from last active
+  //reset's expiry date to next month every 7 days from last active
   if (success) {
     const expires = new Date(Date.now() + 24 * 28 * 3600000);
 
     const { error: e1 } = await getSession({ token, expires });
 
     if (e1) console.error({ error: e1 });
-    else await setCookie("session", cookie, expires);
+    else await setCookie({ name: "session", cookie, expires });
   }
-  return { user };
+  return { user, joined, isAdmin };
 }
 
 //--------> User Account Management
 export async function logUser(username: string, password: string) {
-  const { cookie, error } = await createSession(password, username);
-  if (error) return { error };
-  const { error: e2 } = await setCookie("session", cookie);
+  const expires = new Date(Date.now() + 3600000 * 24 * 28);
+
+  const { cookie, error } = await createSession(password, username, expires);
+  if (error || !cookie) return { error };
+
+  const { error: e2 } = await setCookie({ name: "session", cookie, expires });
   if (e2) return { error: e2 };
 }
 
 export async function unLogUser() {
   const cookie = await getCookie("session");
-  const token = getToken(cookie as string);
+  const token = getToken(cookie!);
 
   const { error } = await deleteSession();
   await deleteCookie("session");
   return error;
 }
 
-export async function signUser({ username, password, safeSD }: signUser) {
+export async function signUser({ username, password, siteData }: signUser) {
   //validate session first -- not needed.
   const userPass = { username, password };
 
-  safeSD = getSafeSD(safeSD as siteData)!;
+  const safeSD = getSafeSD(siteData as siteData)!;
 
   const { cookie, error } = await createUser({ userPass, safeSD });
-  if (error) return { error };
+  if (error || !cookie) return { error };
 
   //update visitorFp function: update db to signed
 
-  await setCookie("session", cookie!);
+  await setCookie({ name: "session", cookie });
   if (safeSD) {
     const { error } = await scheduleShot(safeSD);
     if (error) return { error };
@@ -132,30 +128,36 @@ export async function signUser({ username, password, safeSD }: signUser) {
 
 export async function getUserData() {
   // here I'll collect all the info needed to display in frontend for an active session
-  // eg: userName, unviewedShots, sites, notifications, notepad, deletion
-  const { user } = await validateSession();
+  // notifications: InfiniteQuery; notepad, will have own functions.
+  const { user, joined, isAdmin } = await validateSession();
+
+  if (!user) throw { error: "Unknown user" };
+
+  const { maxCrons, activeSites, userSites, error } = await getActiveSites();
+  if (error) throw { error };
+
+  return { user, joined, maxCrons, activeSites, userSites, isAdmin };
 }
+
+export async function getNotepad(update: "update" | undefined) {}
 
 //rate limit this fn
 export async function deleteAccount(password?: string) {
-  //it treats deleting with pass as different from deletion attempts -- which will make deleting with pass, even when an attempt is registered, its own service (but can be handled F.End)
+  //Has two modes, with pass without pass (deletion attempt) -- which will make deleting with pass, even when an attempt is registered, its own module (but can be handled F.End?)
+  //returns {deletionDue, deleted}: deletionDue -- for deletionAttempt (logged but no password); deleted: true -- when deleted
   const { error: e1, user } = await validateSession();
   if (e1) return { error: e1 };
 
   const { uid, error: e2 } = await checkUser({ username: user, password });
   if (e2) return { error: e2 };
 
-  if (password && !uid) {
-    const { success, remaining, reset } = await delAccountRate.limit(
-      `user:${user}`,
-    );
-    if (!success) {
-      const error = `You have been rate-limited, try again in ${new Date(reset).toLocaleString}`;
-      throw { error };
-    }
+  const { success, reset } = await delAccountRate.limit(`user:${user}`);
+  if (!success) {
+    const error = `Too many attempts, try again on ${new Date(reset).toLocaleString()}`;
+    throw { error };
   }
 
-  const delPass = uid ? true : false;
+  const delPass = uid ? true : false; //uid is defined on pass match
 
   const { deletionDue, deleted, error: e3 } = await deleteUser(user, delPass);
   if (e3) return { error: e3 };
@@ -163,27 +165,26 @@ export async function deleteAccount(password?: string) {
 
   //remove cookie session
   if (deleted) await unLogUser();
-
-  //deletion due is UTC/timestamptz. Would rather render it in user's local time zone -- I don't think that's achieved with: .. perhaps use otherMethod()
+  return { deleted, deletionDue };
 }
 
-export async function undeleteAccount() {
+export async function cancelDeleteAccount() {
   const { error: e1, user } = await validateSession();
   if (e1) return { error: e1 };
 
-  const { error: e2 } = await undeleteUser(user);
-  if (e2) return { error: e2 };
+  const { error: e2 } = await cancelDeleteUser(user);
+  return { error: e2 };
 }
 
 //----------> Shots management
 export async function scheduleShot(safeSD: siteData) {
-  //can use this to unpause crons. instead of in that function
+  //can use this to unpause crons. instead of in own function
 
   const { user, error: e0 } = await validateSession();
   if (e0) return { error: e0 };
 
   safeSD = getSafeSD(safeSD)!;
-  if (!safeSD) return { error: "Unsafe parameters" };
+  if (!safeSD) return { error: "Unsafe parameters!" };
 
   const SDprops = { safeSD, user, del: false, re: false, ...safeSD };
 
@@ -194,19 +195,18 @@ export async function scheduleShot(safeSD: siteData) {
   const { error: e2 } = await updateUserSites(SDprops);
   if (e2) return { error: e2 };
 
-  const { error: e3 } = await updateCronTable(SDprops);
+  const { error: e3, updWorker } = await updateCronTable(SDprops);
   if (e3) return { error: e3 };
 
-  const { error: e4 } = await updateWorker(SDprops);
-  if (e3) return { error: e4 };
+  if (!updWorker) return { error: null };
 
-  return { error: null };
+  const { error: e4 } = await updateWorker(SDprops);
+
+  return { error: e4 };
 }
 
-export async function reactivateShot(safeSD: siteData) {
-  //reactivate shots: in updateUserSites: sets site to active; in updateCronTable: will then reinsert cronData to activate
-  //check active crons in cron table is < maxCron before activating for safe shooting
-  // updateUserSite returns error: null indicating that all requirements including activeCrons < maxCrons suffices
+export async function reactivateCron(safeSD: siteData) {
+  //Calls updateUserSites -> sets site to active; updateCronTable -> will then reinsert cronData or cron.
   const { error: e1, user } = await validateSession();
   if (e1) return { error: e1 };
 
@@ -220,24 +220,25 @@ export async function reactivateShot(safeSD: siteData) {
   if (e2) return { error: e2 };
 
   //handles userSite.inactive when maxAppCrons is reached
-  const updCronProps = { safeSD, user, del: false };
-  const { error: e3 } = await updateCronTable({ ...updCronProps });
+  const { error: e3 } = await updateCronTable({ ...reProps });
   if (e3) return { error: e3 };
 
   //handles cronTable.del and userSite.inactive when maxWorkerCrons is reached
-  const { error: e4 } = await updateWorker({ ...updCronProps });
-  if (e4) return { error: e4 };
+  const { error: e4 } = await updateWorker({ ...reProps });
+
+  return { error: e4 };
 }
 
-export async function deactivateShot(site: string, cron: string) {
+export async function deactivateCron(site: string, cron: string) {
   //pauseCron: doesn't delete site data or column but removes from cronTable
-
-  if (!getSafeSD({ site, cron })) return { error: "Unsafe params" };
-
   const { user, error: e0 } = await validateSession();
   if (!user) return { error: e0 };
 
-  const safeSD = { site, cron };
+  const { site: sS, cron: sC } = getSafeSD({ site, cron })!;
+
+  if (!sS || !sC) return { error: "Unsafe site data!" };
+
+  const safeSD = { site: sS, cron: sC };
   const delCronProps = { safeSD, user, del: true };
 
   const { error: e1 } = await setSiteInactive({ ...safeSD, user });
@@ -245,12 +246,12 @@ export async function deactivateShot(site: string, cron: string) {
 
   const { error: e2, delWorker } = await updateCronTable({ ...delCronProps });
 
-  if (delWorker) {
-    const { error: e3 } = await updateWorker({ ...delCronProps });
-    return { error: e3 };
-  }
+  if (!delWorker) return { error: e2 };
+  // if (e2) return { error: e2 };
 
-  if (e2) return { error: e2 };
+  const { error: e3 } = await updateWorker({ ...delCronProps });
+
+  return { error: e3 };
 }
 
 export async function deleteCron(safeSD: siteData) {
@@ -281,7 +282,7 @@ export async function deleteCron(safeSD: siteData) {
 }
 
 export async function testSite() {
-  //gets a current shot for client feedback
+  //Provides feedback of liveShot when adding schedule.
 }
 
 //---------> analytics
@@ -305,42 +306,62 @@ export async function getShots(prop: shotProp) {
   const { user, error: e1 } = await validateSession();
   if (e1) console.error({ error: e1 });
 
-  //throws when !user
+  //getUserShots when user: userSites is defined else get visitorShots;
   const { userSites, error: e2 } = await getUserSites({ user });
 
-  if (userSites?.[0]?.sites) {
-    const { error, ...shotData } = await getUserShots({ ...prop, user: user! });
+  if (userSites?.length) {
+    const { error, ...shots } = await getUserShots({ ...prop, user: user! });
     if (error) throw error;
-    return shotData;
+    return shots;
   } else {
-    const { error, ...shotData } = await getVisitorShots(prop);
+    const { error, ...shots } = await getVisitorShots(prop);
     if (error) throw error;
-    return shotData;
+    return shots;
   }
 }
 
-export async function getDbShots(props: downloadProps) {
-  //using just site & unviewed -- can handle incremental downloads with next & id
-  const { site, id, next } = props;
+export async function getR2Shot(shotKey: string) {
+  // gets the stored binary from R2 one shot at a time (to fit vercel 4mb serverless function limit).
+  //can always retrieve shotKeys by ID or keys; Then filter that against shots stored in useQuery -- then retrieve only unhad
 
-  const { user, error: e1 } = await validateSession();
-
-  if (user && site)
-    console.error("in getDbShots. Unknown user: ", { site, user });
-
-  const { error, downloadShots } = await getDownloadShots({ ...props, user });
-  if (!downloadShots) return { error };
-  return { downloadShots };
+  const { shotBin, error } = await getDownloadShot(shotKey);
+  if (!shotBin) throw { error };
+  return { shotBin };
 }
 
-export async function delShot({ ids }: { ids: number | number[] }) {
+export async function getR2Html(htmlKey: string) {
+  const { html, error } = await getHtml(htmlKey);
+  if (error) throw { error };
+  return { html };
+}
+
+//gets the shotKeys for downloads,
+export async function getDbShotKeys({
+  timePeriod, // date {from, to}
+  cursor, // {id, next}
+  unviewed,
+  site,
+}: downloadProps & { site: string }) {
+  const { user } = await validateSession();
+  const p = { user, site, downloadProps: { timePeriod, cursor, unviewed } };
+
+  return await getDownloadShotKeys(p);
+}
+
+export async function getCronSchedules() {
+  const { user } = await validateSession();
+  if (!user) return { error: "Unknown user" };
+  return await getCrons();
+}
+
+export async function delShot({ ids, site }: delShotType) {
   //deletes a single shot
-  if (!ids) throw { error: "Missing params!" };
+  if (!ids || !site) throw { error: "Missing params!" };
 
   const { user } = await validateSession();
   if (!user) throw { error: "Unknown User!" };
 
-  const { error } = await deleteShot({ user, ids });
+  const { error } = await deleteShot({ user, ids, site });
   if (error) throw { error };
 
   return { error: null };
@@ -360,14 +381,14 @@ export async function setViewed({
   return { error: null };
 }
 
-export async function getUnviewedCount() {
+export async function getUnviewedIds() {
   const { user } = await validateSession();
   if (!user) return { error: "Unknown user!" };
 
-  const { allUnvieweds, error } = await countUnviewedShots(user);
-  if (!allUnvieweds) return { error: "Could not count user's unvieweds" };
+  const { allSitesUnvieweds, error } = await getUnviewedShotIds(user);
+  if (!allSitesUnvieweds) return { error: "Could not get unvieweds" };
 
-  return { allUnvieweds };
+  return { allSitesUnvieweds };
 }
 
 //-----------> Helpers
@@ -383,15 +404,26 @@ function getSafeSD(safeSD: siteData) {
   return { site, cron, range };
 }
 
-function getToken(cookie: string) {
+export function getToken(cookie: string) {
   if (!cookie) return null;
   return encodeHexLowerCase(sha256(new TextEncoder().encode(cookie)));
 }
 
 //alter consuming files in server.js
-function createCookie() {
+export function createCookie() {
   const bytes = crypto.getRandomValues(new Uint8Array(20));
   return encodeBase32LowerCaseNoPadding(bytes);
+}
+
+export async function createJWT() {
+  //gets Uint8Array binary of secret
+  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+
+  return await new jose.SignJWT({ safe: "true" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt() //this doesn't seem integral -- can remove?
+    .setExpirationTime("1m")
+    .sign(secret);
 }
 
 //--------> types
@@ -399,7 +431,7 @@ type signUser = {
   username: string;
   password: string;
   visitorFp?: string;
-  safeSD?: siteData;
+  siteData?: siteData;
 };
 
 type siteData = {
@@ -413,4 +445,15 @@ export type shotProp = {
   site: string;
   id: number;
   next?: boolean;
+};
+
+type setCookieProp = {
+  name: "session" | "analytics";
+  cookie: string;
+  expires?: Date;
+};
+
+type delShotType = {
+  site: string;
+  ids: number | number[];
 };

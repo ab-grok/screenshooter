@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     console.error("Error in api: ", e);
     const msg = `Could not get readySites. ${JSON.stringify(e)}`;
     const msgData = { msg, danger: true };
-    await setNotification({ msgData, postAdmin: true });
+    await setNotification({ msgData, logError: true });
     return NextResponse.json({ error: "An error occured" }, { status: 401 });
   }
 }

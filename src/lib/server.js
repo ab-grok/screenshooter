@@ -1,14 +1,14 @@
-//Critical error messages: log should be sent to log table using setNotifications.  -- do this
-//Remove env arg from all instances -- now fetches from api
-//Send error logs to settings table not ADMIN
+//To do:
+//Create notepad:jsonb r/w action
+//Create changeAdmin({del});
 
 "use server";
 
 import bcrypt from "bcryptjs";
 import postgres, { Sql } from "postgres";
-import { v4, validate } from "uuid";
-import { shot, downloadShot } from "./types";
-import { getCookie } from "./actions";
+import { v4 } from "uuid";
+import { unviewedType, shotData, downloadProps } from "./types";
+import { createCookie, createJWT, getToken } from "./actions";
 import { formatDate } from "./dateformatter";
 
 function DB(conn) {
@@ -31,72 +31,65 @@ export async function makeEntry({ shotData }) {
   //Id used for removing `failed shot` notifications.
   //sets prevId as fileData when duplicate is found.
   try {
-    if (!db) throw { error: `Db uninitialised!` };
-
     const dateStr = formatDate(new Date());
 
-    const { site, shot, range, html, user, id } = shotData;
-    if (!shot || !html || !user || !site) throw { error: "Missing params" };
+    const { shotKey, htmlKey, site, range, user, id } = shotData;
+    if (!shotKey || !htmlKey || !user || !site)
+      throw { message: "Missing params" };
 
     const sS = safeSite(site, "noDots");
     const u = db(user);
 
-    if (!sS) throw ("in makeEntry site unsafe: ", site, " user: ", user); //how do you catch this?
+    if (!sS)
+      throw {
+        error: "in makeEntry. Site unsafe: " + JSON.stringify({ user, site }),
+      };
 
-    const fileName = sS + "_" + dateStr;
-    const fileType = "image/jpeg";
-    const fileData = shot;
-    const shotCol = db(sS + "_shot");
-    const htmlCol = db(sS + "_html");
+    const shotCol = db(sS + "_shot_key");
+    const htmlCol = db(sS + "_html_key");
 
-    //columns should exist - created in updateShotSchema
-    const htmlData = { html, range };
-    const prevId = await entryExists({ htmlData, user });
-    const updHtml = prevId ? prevId : html;
-
-    const shotData = prevId
-      ? { fileName, fileData: prevId, fileType: "plain/text" }
-      : { fileName, fileData, fileType };
+    //checks that relevant section of html (range) is unique from previous entry -- Obsolete since R2 move (cannot efficiently probe bucket entries partial value match)
+    // const prevId = await entryExists({ htmlData, user });
+    // const updHtml = prevId ? prevId : html;
 
     const r1 =
-      await db`insert into "public".${u} (${shotCol}, ${htmlCol}) values (${shotData}, ${updHtml}) returning id`;
+      await db`insert into "public".${u} (${shotCol}, ${htmlCol}) values (${shotKey}, ${htmlKey}) returning id`;
 
-    if (!r1?.[0].id) throw { error: "in makeEntry. insert failed!" };
+    if (!r1[0].id) throw { message: "in makeEntry. insert failed!" };
 
-    //remove "failed attempt" notification -- that's set when retrieving the sites
+    //remove "failed attempt" notification that was set when retrieving users' siteData
     const noti = { msgData: { id }, user, del: true };
-    const { error } = await setNotification({ ...noti });
-    if (error) throw { error };
+    const { error } = await setNotification(noti);
+    if (error) throw { message: error };
 
     return { error: null };
   } catch (e) {
     console.error(`Error in makeEntry: `, e);
 
-    const msgData = { msg: JSON.stringify(e) };
+    const msgData = { msg: JSON.stringify(e), danger: true };
     const noti = { msgData, logError: true };
-    setNotification(noti);
-    return { error: "Error in makeEntry" };
+    setNotification(noti); //I reckon unawait it does not block program flow but executes regardless?
+    return { error: "Error in makeEntry: " + e.message || "" };
   }
 }
 
+//Checked that the entry is not similar to a previous: obsolete since R2 -- or is there a non-manual method for enmass probing of R2 bucket entries for partial value matches
 async function entryExists({ htmlData, user }) {
   try {
-    //checks if the selected part of a new shot matches a previous entry.
-    //start e: 1477865/1609938, c: 1664160/1663495 -- end e: 1693003 / 1820704  c: 1868906 / 1922007 / 1894144
-    if (!db) throw { error: "Db uninitialised!" };
+    //checks if the selected html range of new shot matches a previous entry.
+    if (!db) throw { message: "Db uninitialised!" };
     const { html, range } = htmlData;
-    if (!safeRange(range)) throw { error: "unsafe range" };
-    if (!html) throw { error: `Missing parameters` };
+    if (!html) throw { message: `Missing parameters` };
 
     const { start, end } = range;
-    const partHtml = db`%${html.slice(start || 0, end)}%`;
+    const partHtml = db`%${html.slice(start || 0, end || -1)}%`;
 
     const u = db(user);
 
     const r1 =
       await db`select id from "public".${u} where date > now() - 1 day and html like ${partHtml} order by date desc limit 1`;
 
-    if (r1?.[0]?.id) return r1[0].id;
+    if (r1[0].id) return r1[0].id;
 
     return null;
   } catch (e) {
@@ -106,126 +99,169 @@ async function entryExists({ htmlData, user }) {
 }
 
 export async function delPrevEntry({ cron, site, user }) {
-  // from worker -- run before setting shot. need this to free up space.
+  // called (indirectly) from worker, runs before setting shot: 7 days limit May be underutilization since R2 storage move
   try {
-    if (!user || !cron || !site) throw { error: `Missing params.` };
+    if (!user || !cron || !site) throw { message: "Missing params." };
 
     const r1 =
       await db`select "storeDuration" from "private"."users" where username = ${user}`;
-    const sD = r1?.[0]?.storeDuration || 1;
+    const sD = r1?.[0]?.storeDuration || 7;
 
-    const storeLimit = new Date();
-    storeLimit.setDate(storeLimit.getDate() - sD);
+    // const storeLimit = new Date();
+    // storeLimit.setDate(storeLimit.getDate() - sD);
 
-    const htmlCol = db(`${safeSite(site, "_")}_html`);
+    //dels both shot and html -- htmlKey will be derived in worker
+    const shotCol = db(`${safeSite(site, "noDots")}_shot_key`);
     const u = db(user);
 
+    //Q: I assume r2 returns rows of all deleted keys?
     const r2 =
-      await db`delete from "public".${u} where ${htmlCol} is not null and date < ${storeLimit} `;
+      await db`delete from "public".${u} where ${shotCol} is not null and date < now() - ${sD} days returning ${shotCol} as "shotKey"`;
+
+    //cron schedule may extend past 7days
+    if (!r2.length)
+      throw { message: "In delPrevEntry: rows failed to delete!" };
+
+    if (r2.length) {
+      //Q: does this accurately map the shotKey column?
+      const shotKeys = r2.map((shotData) => shotData.shotKey);
+
+      const { error } = await deleteR2Shot(shotKeys);
+      if (error) console.error("In delPrevEntry: " + error);
+    }
 
     return { error: null };
   } catch (e) {
     const params = { msg: "error in delPrevEntry", e, cron, site, user };
-    console.error("error in delPrevEntry", e, params);
-    return { error: { ...params } };
+    console.error("error in delPrevEntry", params);
+    return { error: "error in delPrevEntry" + e.message || "" };
+  }
+}
+
+/**
+ * @param {string[]} shotKeysArr
+ * @returns {Promise<{error:string|null}>}
+ */
+async function deleteR2Shot(shotKeysArr) {
+  try {
+    //Can handle objects, strings, arrays --  unnecessary: pass array;
+    // let safeShotKeys = shotKeys; const isObj = typeof shotKeys == "object" && !Array.isArray(safeShotKeys); if (isObj) safeShotKeys = Object.values(shotKeys); else if (!Array.isArray(safeShotKeys)) safeShotKeys = [safeShotKeys]; //is string;
+
+    if (!shotKeysArr) throw { message: `Empty shotKeysArr: ${shotKeysArr}` };
+    if (!Array.isArray(shotKeysArr)) {
+      const message = `shotKeysArr must be an array! shotKeysArr: ${shotKeysArr}`;
+      throw { message };
+    }
+
+    const Authorization = await createJWT();
+
+    const res = await fetch(`${process.env.SHOOTER_URL}?delShot=true`, {
+      method: "POST",
+      headers: { Authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: shotKeysArr }),
+    });
+
+    if (!res.ok) throw { message: await res.json() };
+    return { error: null };
+  } catch (e) {
+    console.error(e);
+    return { error: "error in deleteR2Shot: " + e.message || "" };
   }
 }
 
 export async function getCronSites(cron) {
-  //called from worker -- gets readySites (readyUsers), runs cleanup for crons whose users lastLog > 3mos.
-  //rmv: currently Checking for if it gets userSites that I can check (in updateUserSites) for active prop and validate maxCrons.
+  //called from worker -- gets readySites (sites on cron schedule), runs cron cleanup for users whose lastLog > 3mos.
   try {
-    if (!db) throw { error: "Db uninitialised" };
-
     const readySites = [];
     let errLogs = [];
-    let userInactiveDate = new Date();
-    userInactiveDate.setMonth(userInactiveDate.getMonth() - 3);
+    let userInactivePeriod = new Date();
+    userInactivePeriod.setMonth(userInactivePeriod.getMonth() - 3);
 
     const r1 =
       await db`select "cronData" as "cD" from "private"."crons" where cron = ${cron}`;
-    const r1a = r1[0]?.cD;
+    const cronsData = r1?.[0]?.cD;
 
-    if (!r1a || (r1a.length == 1 && !r1a[0])) {
-      //Log empty cron and del
-      const msg = `in getCronSites. Cron not found. Running cleanup! Cron: ${cron}`;
+    if (!cronsData || (cronsData.length == 1 && !cronsData[0])) {
+      //Logs empty cron then del
+      const msg = `in getCronSites. Cron schedule '${cron}' missing. Running cleanup!`;
       const eLog = { msgData: { msg }, logError: true };
       setNotification(eLog);
       console.error(msg);
 
       await db`delete from "private"."crons" where cron = ${cron}`;
 
-      const updW = { user: "clean", cron, del: true };
+      const updW = { user: "Cleaner", cron, del: true };
       const { error } = await updateWorker(updW);
-      if (error) throw { error };
+      if (error) throw { message: error };
 
-      console.log("in getCronSites. Cron cleaned!");
+      console.log(`in getCronSites. Cron: '${cron}' cleaned!`);
+      //Q: added quotes to dynamic var 'cron', or does the evaluated string come already quoted?
       return { error: null };
     }
 
-    for (const [{ site, range, user }, i] of r1a) {
-      //I reckon i provides the current index?
-      let isError;
+    //loops over cronsData retreiving siteData per userCron (as cronsData[] entries)
+    for (const [i, { site, range, user }] of cronsData.entries()) {
+      let erred;
 
-      //for lastLog sessionId should be set to null and not deleted when logging out;
       const r2 =
         await db`select s."lastLog" from "private"."users" inner join "private"."sessions" s on uuid = s.uuid where username = ${user} `;
-      const lastLog = r2[0]?.lastLog;
+      const lastLog = r2?.[0]?.lastLog;
 
-      console.log("in getCronSites. user: ", user, "lastLog: ", lastLog);
+      console.log("in getCronSites: ", { user, lastLog });
 
-      if (userInactiveDate > new Date(lastLog) || !lastLog) {
+      //sets userSites and cron inactive / deleted when inactivity limit is reached;
+      if (!lastLog || userInactivePeriod > new Date(lastLog)) {
         const msg =
-          "In getCronSites. User unlogged past 3 months. Removing cron and prevEntries";
-        setNotification({ msgData: { msg }, logError: true });
-        console.log(msg, `lastLog: ${lastLog}`);
+          "User inactivity period maxed! User's crons and keys have been cleaned!";
+        await setNotification({ msgData: { msg, danger: true }, user });
+        console.log(msg, lastLog);
 
-        const safeSD = { site, cron, range };
+        const safeSD = { site, cron, range, user };
         const updCron = { safeSD, user, del: true };
 
-        const { error: sitesErr } = await setSiteInactive({ site, cron, user });
-        //delete cron data from cron table -- cron needs to be reset on setSiteActive
-        const { delWorker, error: cronErr } = await updateCronTable(updCron);
+        const { error: delSitesErr } = await setSiteInactive(safeSD);
+        const { delWorker, error: delCronErr } = await updateCronTable(updCron);
 
         let delWorkerErr;
-
         if (delWorker) {
-          const { error: e1 } = await updateWorker({ ...updCron });
+          const { error: e1 } = await updateWorker(updCron);
           delWorkerErr = e1;
         }
 
-        if (sitesErr || cronErr || delWorkerErr) {
-          isError = true;
-          const error = { sitesErr, cronErr, delWorkerErr };
-          errLogs.push({ user, cron, error }); //this pushes each arg as array entry -- correct?
+        if (delSitesErr || delCronErr || delWorkerErr) {
+          erred = true;
+          const errors = { delSitesErr, delCronErr, delWorkerErr }.filter(
+            boolean,
+          ); //does this work?
+          errLogs.push({ user, cron, ...errors });
         }
       }
 
-      //remove previous shots (greater than one day) to free up db space.
+      //remove previous keys greater than 7 days -- R2 bucket has 10GB storage limit.
       const { error: delPrevErr } = await delPrevEntry({ cron, site, user });
       if (delPrevErr) {
         //mutate errorLogs to include delPrevErr;
-        isError = true;
-        const thisLog = errLogs.find((e) => (e?.user = user)) || { user, cron };
+        erred = true;
+        const thisLog = errLogs.find((e) => e?.user == user) || { user, cron };
         errLogs = [
-          ...errLogs.filter((e) => (e?.user = user)),
-          { ...thisLog, error: { ...thisLog.error, delPrevErr } },
+          ...errLogs.filter((e) => e?.user != user),
+          { ...thisLog, delPrevErr },
         ];
       }
 
-      if (isError) continue; //Skip rest of code on error
+      if (erred) continue; //Do not push to readySites when erred;
       readySites.push({ user, site, range });
     }
 
-    //Accounting for worker timeout scenario -- users get notified of failed attempt using same 'id', this is later removed on successful write.
-    const msg = `Shot failed to save! Cron: ${cron} fired on ${formatDate(new Date())}.`;
+    //Accounting for worker timeout scenario -- users get pessimistically notified of failed attempt, this is later removed on successful write.
+    const msg = `Shot failed to save: Cron ${cron} fired on ${formatDate(new Date())}.`;
     const user = readySites.map((s) => s.user);
     const msgData = { msg, danger: true };
     const { id } = await setNotification({ msgData, user });
 
     //Log all per user error objects.
     errLogs.forEach((e) => {
-      const msgData = { msg: JSON.stringify(e) };
+      const msgData = { msg: JSON.stringify(e), danger: true };
       setNotification({ msgData, logError: true });
     });
 
@@ -238,286 +274,70 @@ export async function getCronSites(cron) {
   }
 }
 
-//-------------------------------------------------------------------------------> client actions
-
-// /**
-//  * @typedef {Object} file
-//  * @property {string} fileName
-//  * @property {string} fileData
-//  * @property {string} fileType
-//  */
-// /**
-//  * @typedef {Object} shot
-//  * @property {string} html
-//  * @property {file} file
-//  * @property {Date} date
-//  * @property {number} id
-//  * @property {boolean} viewed
-//  */
-/**
- * @param {{site: string, user: string, id: number, next?:boolean}} shotSet
- * @returns {Promise<{error: string, nextCursor: number, prevCursor:
- * number, noMoreNext: boolean, noMorePrev: boolean, shots: shot[]}>}
- */
-
-export async function getUserShots(shotSet) {
-  //gets usersite html and screenshot data
-  //noMoreNext/Prev: returns true when the retrieved set is less than the limit.
-  // id: indicates the current position; next: indicates fetch direction.
-  try {
-    const { site, id, next: n, user } = shotSet;
-
-    const res =
-      await db`select sites from "private"."users" where username = ${user} `;
-
-    if (!res[0]?.sites || res[0]?.sites?.length == 0)
-      throw { error: "User has no sites" };
-
-    const saferSite = safeSite(site, "noDots");
-    const sS = safeSite(site);
-    const hC = db(`${saferSite}_html`);
-    const sC = db(`${saferSite}_shot`);
-    const u = db(user);
-    let nextCursor, prevCursor, noMoreNext, noMorePrev;
-
-    const thisSite = res[0].sites.find((s) => s.site == sS);
-    if (!thisSite)
-      throw { error: `Site not found. site: ${site}, dbSite: ${sS} ` };
-
-    //When no id is passed (at initial fetch) assign the last stored viewedId to id
-    if (!id) {
-      //does this correctly filter the jsonb[] for object of matching site and return only that?
-      const r1 =
-        await db`select ( select v from unnest("viewedId") as v where v ->> 'site' = ${sS} ) from "private"."users" where username = ${u} `;
-      id = r1?.[0]?.v?.viewedId || 1;
-    }
-
-    const clause = db`id ${n ? db`>` : db`<`} ${id}`;
-
-    const shots =
-      await db`select ${hC} as html, ${sC} as file, date, viewed, id from "public".${u} where html is not null and ${clause} order by id asc limit 20`;
-
-    if (!shots[0]) throw { error: "No rows in user table! " };
-
-    const viewIds = shots.map((s) => s.id);
-
-    nextCursor = viewIds.at(-1);
-    prevCursor = viewIds.at(0);
-    noMoreNext = next && viewIds.length < 20;
-    noMorePrev = !next && viewIds.length < 20;
-
-    return { nextCursor, prevCursor, noMoreNext, noMorePrev, shots };
-  } catch (e) {
-    console.error("Error in getUserShots: ", e);
-    return { error: "Couldn't get userShots " + e.error };
-  }
-}
-
-/**
- * @param {{site: string, id: number, next?:boolean}} shotSet
- * @returns {Promise<{error: string, nextCursor: number, prevCursor:
- * number, noMoreNext: boolean, noMorePrev: boolean, shots:shot[]}>}
- */
-
-export async function getVisitorShots(shotSet) {
-  //check if VSITE, VTB vars are set.
-  //Create a user "visitor" with a table and site: cnn -- check same site in takeShot to get both in one go.
-  try {
-    const { id, next } = shotSet;
-
-    const saferSite = safeSite(process.env.VSITE, "noDots");
-    const vShot = db(`${saferSite}_shot`);
-    const vHtml = db(`${saferSite}_html`);
-    const vtb = db(process.env.VTB);
-    let nextCursor, prevCursor, noMoreNext, noMorePrev;
-
-    //When no id is passed (at initial fetch) assign the last stored viewedId to id
-    //Make sure to insert viewedId on viewed fn -- and create db type -- v: {site, viewedId}
-    if (!id) {
-      const r1 =
-        await db`select ( select v from unnest("viewedId") as v where v ->> 'site' = ${sS} ) from "private"."users" where username = ${u} `;
-      id = r1?.[0]?.v?.viewedId || 1;
-    }
-
-    const clause = db`id ${next ? db`>` : db`<`} ${id}`;
-
-    const shots =
-      await db`select id, ${vShot} as file, ${vHtml} as html, date, viewed from "public".${vtb} where html is not null and ${clause} order by id asc limit 20 `;
-
-    if (!shots[0]) throw { error: "Visitor table returned no rows!" };
-    const viewIds = shots.map((s) => s.id);
-
-    nextCursor = viewIds.at(-1);
-    prevCursor = viewIds.at(0);
-    noMoreNext = next && viewIds.length < 20;
-    noMorePrev = !next && viewIds.length < 20;
-
-    return { nextCursor, prevCursor, noMoreNext, noMorePrev, shots };
-  } catch (e) {
-    console.error("Error in getVisitorShots. ", e);
-    return { error: "Couldn't get visitor shots. " + e.error };
-  }
-}
-
-//here I retrieve shots from db -- each shot contains a jpeg of about 3MB I reckon (full screenshot of website w puppeteer @ `jpeg: 80`), and corresponding HTML. So How many shots do you reckon I can get through this server action before it breaks vercel's free tier limit in size or compute?
-/**
- * @param {{unviewed?: boolean; user?: string, site?: string, id?: number, next?:boolean}} params
- * @returns {Promise<{error?: string; downloadShots: Omit<shot, "viewed">[] }>}
- */
-export async function getDownloadShots({ site, user, id, next }) {
-  //id! may be used as cursor for getting shots; Can set up as incremental downloads for large amounts (set limit);
-
-  try {
-    const u = user && site ? true : false; //check user is logged and has scheduled a shot
-
-    const saferSite = safeSite(u ? site : process.env.VSITE, "noDots");
-    const html_col = db(saferSite + "_html");
-    const shot_col = db(saferSite + "_shot");
-    const tb = db(u ? user : process.env.VTB);
-
-    const clause = id
-      ? next
-        ? db`id > ${id}`
-        : db`id < ${id}`
-      : db`viewed = false`;
-
-    const downloadShots =
-      await db`select id, ${shot_col} as file, ${html_col} as html, date from public.${tb} where html is not null and ${clause}`;
-    if (!downloadShots[0]) throw { error: "No rows in user's table!" };
-
-    return {
-      downloadShots,
-    };
-  } catch (e) {
-    console.error("In getDownloadShots: ", e);
-    return { error: `In getDownloadShots: ${e.error || e.message}` };
-  }
-}
-
-export async function deleteShot({ ids, user }) {
-  //can send an array of shot IDs
-  try {
-    !Array.isArray(ids) && (ids = [ids]);
-    const u = db(user);
-
-    const r1 = await db`delete from "public".${u} where id = any(${ids})`;
-    return { error: null };
-  } catch (e) {
-    console.error("Error in deleteShot: ", e);
-    return { error: `Could not delete shot: ${e.message}` };
-  }
-}
-
-export async function setShotViewed({ site, ids, user }) {
-  //call from frontend when user opens unviewed images
-  // sets viewed in user's table to true: ids: [] -- will call per opened shot or selectedShots.
-
-  try {
-    if (!user || !site || !ids) throw { message: "Missing parameters" };
-
-    !Array.isArray(ids) && (ids = [ids]);
-    const sS = safeSite(site);
-
-    const u = db(user);
-    await db`update "private".${u} set viewed = true where site = ${site} and id = any(${ids})`;
-
-    //Store viewedId -- does this filter out the corresponding site's object and insert a new one as intended?
-    await db`update "private"."users" set "viewedId" = array_append((select v from unnest("viewedId") as v where v->> 'site' != ${sS}), jsonb_build_object('site', ${sS}, "viewedId", ${ids.at(-1)}) ) where user = ${u}`;
-    return { error: null };
-  } catch (e) {
-    console.error("error in setEntryViewed: ", e);
-    return { error: "couldn't setEntryViewed: " + e.message };
-  }
-}
-
-export async function countUnviewedShots(user) {
-  //unviewed: {site, count}
-  //Gets the number of unopened shots per site
-  try {
-    const { tableName, userSites } = await getUserSites({ user });
-    if (!userSites) throw { error: "User has no sites" };
-    const u = db(tableName);
-
-    const allUnvieweds = await Promise.all(
-      userSites.map(async (s) => {
-        try {
-          const r1 =
-            await db`select count(*) from "public".${u} where site = ${s.site} and viewed = false`;
-          return { site: s.site, unvieweds: r1[0].count };
-        } catch (e) {
-          console.error("Error in countUnviewedShots > userSites.map: ", e);
-          return { site: s.site, unvieweds: 0 };
-        }
-      }),
-    );
-    return { allUnvieweds };
-  } catch (e) {
-    console.error("Error in countUnviewedShots. ", e);
-    return { error: "Could not get unviewed shots. " + e.error };
-  }
-}
-
 //------------------------------------------------------------------------> cron scheduling
 
 export async function updateShotSchema({ site, user, del }) {
-  //creates a table for user in root db with default cols. Can also delete site cols
+  //creates a table for user in root db with default cols. Can also delete siteCols (site)
   try {
     const saferSite = safeSite(site, "noDots");
-    if (!saferSite) throw { error: "Invalid site" };
+    if (!saferSite) throw { message: "Unsafe site: " + site };
     const { tableName, userSites } = await getUserSites({ user });
 
     const u = db(user);
-    const htmlCol = db(saferSite + "_html");
-    const shotCol = db(saferSite + "_shot");
+    const htmlCol = db(saferSite + "_html_key");
+    const shotCol = db(saferSite + "_shot_key");
 
     if (!tableName) {
       if (del)
         await db`create table "public".${u} (id serial primary key, date timestamptz default now())`;
       else
-        await db`create table "public".${u} (id serial primary key, date timestamptz default now(), viewed boolean default false, ${htmlCol} text, ${shotCol} jsonb)`;
+        await db`create table "public".${u} (id serial primary key, date timestamptz default now(), viewed boolean default false, key_expires timestamptz default (now() + interval '7 days'), shot_url text, ${shotCol} text, ${htmlCol} text)`; //does this work as intended -- I'm careful about 'now()', '7 days'?
     } else {
       const alterTb = db`alter table "public".${u}`;
-      if (del)
-        await db`${alterTb} drop column ${htmlCol}; ${alterTb} drop column ${shotCol}`;
-      else
-        await db`${alterTb} add column if not exists viewed boolean default false; ${alterTb} add column if not exists ${htmlCol} text; ${alterTb} add column if not exists ${shotCol} jsonb`;
+      if (del) {
+        await db`delete from public.${u} where ${htmlCol} is not null`;
+        await db`${alterTb} drop column ${htmlCol}, drop column ${shotCol}`;
+      } else
+        await db`${alterTb} add column if not exists viewed boolean default false, add column if not exists key_expires timestamptz, add column if not exists shot_url add column if not exists ${htmlCol} text, add column if not exists ${shotCol} text`;
     }
     return { user, saferSite, userSites };
   } catch (e) {
     console.error("error in updateShotSchema: ", e);
-    return { error: "Couldn't create  ShotSchema. " + e.error };
+    return { error: "Couldn't create  ShotSchema. " + e.message || "" };
   }
 }
 
 export async function updateUserSites({ safeSD, user, del, re }) {
   try {
+    //Needs fixing: range is now obsolete (using R2 buckets);
     //Merges safeSD with existing data if any: invalid safeSD props in upd/re used as del indicator (just range)
 
     const { cron, site, range } = safeSD;
 
     if (del) {
       await db`update "private"."users" set sites = array(select s from unnest(sites) as s where s ->> 'site' != ${site} ) where username = ${user}`;
-      console.log(`in updateUserSites. {Site: ${site}, cron: ${cron}} removed`);
+      const uSite = JSON.stringify({ site, cron });
+      console.log(`in updateUserSites. Removed site: ${uSite}`);
       return { error: null };
     }
 
     const { canAddSite, ...rest } = await getActiveSites(user);
     const { userSites } = rest;
 
-    const tS = userSites?.find((s) => s.site == site);
+    const thisSite = userSites?.find((s) => s.site == site);
 
-    if (tS?.active) {
+    if (thisSite?.active) {
       console.log("Tried adding an active site");
       return { error: null };
     }
 
-    //can upd range in both re and upd so set safeRange regardless
+    //can upd range in both re and upd so set safeRange regardless; sR = 'invalid value' indicates to del range
     let sR = safeRange(range);
 
     const newR = sR?.start != range?.start && sR?.end != range.end; //there's invalid sR
 
-    //inserting an existing cron
-    if (!newR || cron == tS.cron || !re) {
+    //when not changing range, or cron or reactivating site (does not allow changing site)
+    if (!newR && cron == thisSite.cron && !re) {
       const msg = "No change to existing cronData. Did not update.";
       console.log("In updateUserSites: ", msg, { site, cron });
       return { error: null };
@@ -525,17 +345,17 @@ export async function updateUserSites({ safeSD, user, del, re }) {
 
     const updSite = {
       site,
-      ...(re ? tS : {}),
-      ...(cron && cron != tS?.cron ? { cron } : {}),
-      ...(range && !sR ? { range: null } : {}), //set to null when range invalid, else default to tS.range
+      ...(re ? thisSite : {}),
+      ...(cron && cron != thisSite.cron ? { cron } : {}),
+      ...(range && !sR ? { range: null } : {}), //set to null when range invalid, else default to thisSite.range
       ...(range && sR ? { range } : {}), //upd range when passed, else default
-      ...(canAddSite && (!tS || re) ? { active: true } : {}), //only set active:true when it's a new site or reactivating
+      ...(canAddSite && (!thisSite || re) ? { active: true } : {}), //only set active:true when it's a new site or reactivating
     };
 
     await db`update "private"."users" set sites = array( select (case when s->>'site' = ${site} then ${updSite} else s end) from unnest(sites) as s ) where username = ${user}`;
 
     console.log("in updateUserSites. User's siteData has been changed.");
-    if (!canAddSite) throw { error: "Max crons reached" };
+    if (!canAddSite) throw { message: "Max crons reached" };
     return { error: null };
   } catch (e) {
     console.error("Error in updateUserSites: ", e);
@@ -544,62 +364,66 @@ export async function updateUserSites({ safeSD, user, del, re }) {
 }
 
 export async function updateCronTable({ safeSD, user, del }) {
-  //Tb structure: cron -> string, cronData -> {cron, user, range}[]
-  //For mass delete cronData on staleCron:  Less compute cost per invocation with calling this per site than setting all userSites to inactive in one go -- as cronTable will require all row search & update for Locating user sites across crons
-  //if new, Call after updateUserSites -- cause that checks user's maxCrons potentially throwing an error this depends on;
+  //Tb structure: cron: string, cronData: {cron, user, range}[]; safeSD: {cron, site, range}[];
+  //canAddCron: checks max app crons is not reahed -- 5 right now; Returns {delWorker: true} indicates to run del in updWorker().
 
-  //canAddCron tracks max crons the app can cater to -- 5 right now; safeSD: {cron, site, range}[];
-  //returns: {delWorker: true} indicates to run del on updWorker().
-  //check that users get MaxCron = 1 on user creation.
+  //Retroactively deletes inactive user crons per invocation (not an immediate delete);
+  //if signing, Call after updateUserSites -- that may throw errors (user's maxCron), which this depends on.
 
   try {
     const { cron, site, range } = safeSD;
     const cronData = { user, site, ...(range ? { range } : {}) };
 
-    const r1 = await db`select count(cron) from "private"."crons"`; //for cron length;
-    const cronCount = r1[0].count;
+    const r1 = await db`select count(cron) from "private"."crons"`;
+    const cronCount = r1[0].count; //I reckon count(cron) is accessible as count?;
 
+    //check app crons;
     if (!cronCount) {
-      if (del) throw { error: "No crons found!" };
+      if (del) throw { message: "No crons found to delete!" };
+
       console.log("in updateCronTable. No crons found. Inserting first cron");
-      await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array[${cronData}::jsonb])`;
+      await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array[${cronData}::jsonb)]`;
+
+      return { delWorker: false, updWorker: true };
     }
 
+    //app crons > 1; Check for existing cron
     const r2 =
-      await db`select cron from "private"."crons" where cron = ${cron}`; // for cron exists;
+      await db`select cron from "private"."crons" where cron = ${cron}`;
     const sameCron = r2[0]?.cron;
 
     const r3 =
       await db`select "maxCrons" from "private"."settings" where id = 1`;
 
-    const canAddCron = (cronCount || 0) < (r3[0]?.maxCrons || 5); //for new crons;
+    const canAddCron = cronCount < (r3?.[0]?.maxCrons || 5); //for new crons;
 
     if (!sameCron) {
-      //cron does not exist
-      if (del) throw { error: "Cron does not exist!" };
-      if (!canAddCron)
-        //new/re site can't get cron schedule -- set site inactive
-        throw { error: "app maxCrons reached." };
+      //cron is new
+      if (del) throw { message: "Cron does not exist!" };
+      //new or reactivating site can't get cron schedule, so must set site inactive
+      if (!canAddCron) throw { message: "app maxCrons reached." };
 
-      await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array(${cronData}::jsonb))`;
+      await db`insert into "private"."crons" (cron, "cronData") values (${cron}, array[${cronData}::jsonb)]`;
+      return { updWorker: true };
     } else if (del) {
       //deleting an existing cron
       const r4 =
         await db`update "private"."crons" set "cronData" = array(select c from unnest("cronData") as c where not (c ->> 'site' = ${site} and c ->> 'user' = ${user})) where cron = ${cron} returning "cronData"`;
-      const r4a = r4[0]?.cronData;
+      const r4a = r4?.[0]?.cronData;
 
-      if (!r4a || !r4a.length || (r4a.length == 1 && r4a[0] == null)) {
-        //no cronData in cron schedule
+      if (!r4a || !r4a.length || (r4a.length == 1 && !r4a[0])) {
+        //no crons in schedule;
         await db`delete from "private"."crons" where cron = ${cron}`;
-        return { delWorker: true, error: null };
+        return { delWorker: true };
       }
-    } else
-      //Trying to add cron -- check that cron doesn't exist then add
+    } else {
+      //sameCron && !del: Check if user's site is in schedule else add.
       await db`update "private"."crons" set "cronData" = case when exists (select 1 from unnest("cronData") as c where c ->> 'site' = ${site} and c ->> 'user' = ${user}) then "cronData" else array_append( "cronData", ${cronData}::jsonb ) end where cron = ${cron}`;
+    }
 
-    return { delWorker: false, error: null };
+    return { delWorker: false, updWorker: false };
   } catch (e) {
-    //if adding cron -- (!del): then set userSite.inactive -- del presumes userSites().del has already run
+    //if adding cron (!del): set userSite.inactive; del presumes userSites().del has already run
     const e0 = "In updateCronTable. Couldn't add cron to table.";
     const e1 = e0 + !del ? "Setting site to inactive" : "";
 
@@ -607,7 +431,7 @@ export async function updateCronTable({ safeSD, user, del }) {
     console.error(log);
 
     if (!del) await setSiteInactive({ ...safeSD });
-    return { error: e0 + e.error };
+    return { error: e0 + e.message || "" };
   }
 }
 
@@ -619,7 +443,7 @@ export async function updateWorker({ safeSD, user, del }) {
     const shooterUrl = process.env.SHOOTER_URL;
     const shooterKey = process.env.SHOOTER_KEY;
     console.log("in UpdateWorker. ", { shooterUrl, shooterKey });
-    if (!shooterKey || !shooterUrl) throw { error: "env vars not found!" };
+    if (!shooterKey || !shooterUrl) throw { message: "env vars not found!" };
 
     const headers = {
       "Content-Type": "application/json",
@@ -633,7 +457,7 @@ export async function updateWorker({ safeSD, user, del }) {
 
     if (!r1.ok) {
       const error = "ShooterWorker API fetch failed: ";
-      throw { error, load: worker?.error };
+      throw { message, load: worker?.error };
     }
 
     console.log("ShooterWorker API fetch success: ", { cron, worker });
@@ -659,7 +483,7 @@ export async function updateWorker({ safeSD, user, del }) {
       //Checking maxCrons limit before inserting cron -- should be safe after updateCronSites (only context where I'm adding crons) -- still check.
       //wrong -- should check worker crons length instead. as true indication of worker cron limit.
       const workerCrons = worker.result?.schedules?.length;
-      if (workerCrons >= 5) throw { error: "worker maxCrons reached." };
+      if (workerCrons >= 5) throw { message: "worker maxCrons reached." };
 
       updCrons = [...prevCrons, { cron }];
     }
@@ -671,7 +495,8 @@ export async function updateWorker({ safeSD, user, del }) {
     });
 
     const r3a = await r3?.json();
-    if (!r3.ok) throw { error: "ShooterWorker PUT failed", load: r3a?.errors };
+    if (!r3.ok)
+      throw { message: "ShooterWorker PUT failed", load: r3a?.errors };
 
     console.log("in updateWorker. added new cron to existing crons. ");
     return { error: null };
@@ -679,7 +504,7 @@ export async function updateWorker({ safeSD, user, del }) {
     const e0 = "Error updating worker. ";
     const e1 =
       e0 + !del ? "Will set site inactive and remove from cronTable" : "";
-    const msg = `${e1} ${JSON.stringify({ user, error: e })}`;
+    const msg = `${e1} user: '${user}', error: '${error}'`;
     setNotification({ msgData: { msg }, logError: true });
     console.error(msg);
 
@@ -688,36 +513,398 @@ export async function updateWorker({ safeSD, user, del }) {
       await setSiteInactive(safeSD);
     }
 
-    return { error: e0 + e.error };
+    return { error: e0 + e.message || "" };
+  }
+}
+
+//-------------------------------------------------------------------------------> client actions
+
+// /**
+//  * @typedef {Object} file
+//  * @property {string} fileName
+//  * @property {string} fileData
+//  * @property {string} fileType
+//  */
+// /**
+//  * @typedef {Object} shot
+//  * @property {string} html
+//  * @property {file} file
+//  * @property {Date} date
+//  * @property {number} id
+//  * @property {boolean} viewed
+//  */
+/**
+ * @param {{site: string, user: string, id: number, next?:boolean}} shotSet
+ * @returns {Promise<{error: string, nextCursor: number, prevCursor:
+ * number, noMoreNext: boolean, noMorePrev: boolean, shotsData: shotData[]}>}
+ */
+
+export async function getUserShots(shotSet) {
+  //gets shot & html keys
+  //noMoreNext/Prev: returns true when the retrieved set is less than the limit.
+  // id: indicates the current position; next: indicates fetch forward direction.
+  try {
+    const { site, next: n, user, id: id0 } = shotSet;
+    let id = id0;
+
+    const r1 =
+      await db`select sites from "private"."users" where username = ${user} `;
+    const sites = r1?.[0]?.sites;
+
+    if (!sites.length) throw { message: "User has no sites" };
+
+    const saferSite = safeSite(site, "noDots");
+    const sS = safeSite(site);
+    const hC = db(`${saferSite}_html_key`);
+    const sC = db(`${saferSite}_shot_key`);
+    const u = db(user);
+
+    const thisSite = sites?.find((s) => s.site == sS);
+    if (!thisSite)
+      throw {
+        message: `Site not found. safeSite: ${sS}, sites: ${JSON.stringify(sites)} `,
+      };
+
+    //When no id is passed (at initial fetch) assign the last stored viewedId to id
+    if (!id) {
+      const r2 = //jsonb_array_elements(viewedId: column)
+        await db`select v ->> 'viewedId' as "lastViewedId" from "private"."users" cross join lateral jsonb_array_elements("viewedId") as v where username = ${user} and v ->> 'site' = ${sS}`;
+      id = r2?.[0]?.lastViewedId || 1;
+    }
+
+    //Get user shot data from user's table;
+    const clause = db`id ${n || (!n && !id0) ? db`>` : db`<`} ${id}`;
+    let shotsData =
+      await db`select id, ${hC} as "htmlKey", ${sC} as "shotKey", shot_url as "shotUrl", date, viewed, key_expires as expires from "public".${u} where ${hC} is not null and ${clause} order by id asc limit 20`;
+
+    if (!shotsData[0]) throw { message: "No rows in user table!" };
+
+    //Get new signedURLs for shotKeys with expired urls;
+    const expiresIn = new Date(Date.now() + 3600 * 24 * 7);
+    const expUrlKeys = shotsData
+      .filter((s) => new Date() > new Date(s.expires))
+      .map((s) => s.shotKey);
+
+    if (expUrlKeys.length) {
+      //keysData: {key, url}[]
+      const { keysData, error } = await getSignedUrls(expUrlKeys);
+      if (error) throw { message: "Error getting new signed urls!" };
+
+      //normalize shotsData array to include new signedUrls
+      shotsData = shotsData.map((shot) => {
+        //if kD then shotUrl has expired: update;
+        const kD = keysData.find((kD) => kD.key == shot.shotKey);
+        return { ...shot, ...(kD ? { shotUrl: kD?.url } : {}) };
+      });
+
+      //Update table with new signedUrls;
+      const r4 =
+        //jsonb_array_elem() helps parse keysData for sql manipulation; keysData cast to jsonb but is jsonb[];
+        await db`update ${u} set "shotUrl" = kd ->> 'url', key_expires = ${expiresIn} from jsonb_array_elements(${keysData}::jsonb) as kd where ${sC} = kd ->> 'key' `;
+    }
+
+    const viewIds = shotsData.map((s) => s.id);
+    const nextCursor = viewIds.at(-1);
+    const prevCursor = viewIds.at(0);
+    const noMoreNext = !!next && viewIds.length < 20;
+    const noMorePrev = !next && viewIds.length < 20;
+
+    return { nextCursor, prevCursor, noMoreNext, noMorePrev, shotsData };
+  } catch (e) {
+    console.error("Error in getUserShots: ", e);
+    return { error: "Couldn't get userShots " + e.message || "" };
+  }
+}
+
+/**
+ * @param {{site: string, id: number, next?:boolean}} shotSet
+ * @returns {Promise<{error: string, nextCursor: number, prevCursor:
+ * number, noMoreNext: boolean, noMorePrev: boolean, shotsData:shotData[]}>}
+ */
+
+export async function getVisitorShots(shotSet) {
+  //check if VSITE, VTB vars are set
+  try {
+    //is using let in destructure like this ok, since I reassign to id or will eslint throw on vercel deploy?
+    const { id, next: n } = shotSet;
+
+    const saferSite = safeSite(process.env.VSITE, "noDots");
+    const vShot = db(`${saferSite}_shot_key`);
+    const vHtml = db(`${saferSite}_html_key`);
+    const vtb = db(process.env.VTB);
+
+    //where clause construction: get next/prev shotsData when id, else retrieve the 20 most recent rows (initial fetch);
+    const clause = db`${id ? db`and id ${n ? db`>` : db`<`} ${id} order by id asc` : db`order by id desc`}`;
+    const expiresIn = new Date(Date.now() + 3600 * 24 * 7);
+
+    let shotsData =
+      await db`select id, ${vShot} as "shotKey", shot_url as "shotUrl", ${vHtml} as "htmlKey", date, viewed, key_expires as expires from "public".${vtb} where ${vHtml} is not null ${clause} limit 20 `;
+
+    if (!shotsData[0]) throw { message: "Visitor table returned no rows!" };
+    if (!id) shotsData.reverse(); //reverse desc order to asc (on init fetch); I reckon the original array is mutated?
+
+    const expUrlKeys = shotsData
+      .filter((s) => new Date(s.expires) < new Date())
+      .map((s) => s.shotKey);
+
+    //If one or more signed urls have expired
+    if (expUrlKeys.length) {
+      const { keysData, error } = await getSignedUrls(expUrlKeys);
+      if (error) throw { message: "Error getting new signed urls!" };
+
+      //update table with new signedUrls;
+      const r4 =
+        await db`update ${vtb} set "shotUrl" = kd ->> 'url', key_expires = ${expiresIn} from jsonb_array_elements(${keysData}::jsonb) as kd where ${vShot} = kd ->> 'key' }`;
+
+      //normalize new signed urls to shotsData array;
+      shotsData = shotsData.map((shot) => {
+        const url = keysData.find((kD) => kD.key == shot.shotKey);
+        return { ...shot, ...(url ? { shotUrl: url } : {}) };
+      });
+    }
+
+    const viewIds = keys.map((s) => s.id);
+    const nextCursor = viewIds.at(-1);
+    const prevCursor = viewIds.at(0);
+    const noMoreNext = !!next && viewIds.length < 20;
+    const noMorePrev = !next && viewIds.length < 20;
+
+    return { nextCursor, prevCursor, noMoreNext, noMorePrev, shotsData };
+  } catch (e) {
+    console.error("Error in getVisitorShots. ", e);
+    return { error: "Couldn't get visitor keys. " + e.message || "" };
+  }
+}
+
+//create separate getHtml() function.
+//return shotKey and htmlKey in getShots
+
+/**
+ * @param {{site?: string, user?: string, downloadProps: downloadProps}}
+ * @returns {Promise<{error?: string, dShotData: Omit<shotData, "viewed">[]}>}
+ */
+export async function getDownloadShotKeys({ site, user, downloadProps }) {
+  //can pass timePeriod, or cursor, else  ;
+  //does not limit results but that is unnecessary for low cost retrieval
+
+  try {
+    const u = user && site ? true : false; //check user is logged and has scheduled a shot
+    const { timePeriod, cursor, unviewed } = downloadProps;
+
+    //check timeperiod is present
+    const t1 = isDate(timePeriod.from) ? timePeriod.from : null;
+    const t2 = isDate(timePeriod.to) ? timePeriod.to : new Date();
+
+    //alternatively get id cursor
+    const { id, next } = cursor;
+
+    //clause conditionally selecting timePeriod, cursor, or unvieweds -- or combos
+    let clause = db``;
+    if (id) clause = db`and id ${next ? db`>` : db`<`} ${id}`;
+    if (unviewed) clause = db`${clause} and viewed = false`;
+    if (t1) clause = db`${clause} and date > ${t1} and date < ${t2}`;
+
+    const saferSite = safeSite(u ? site : process.env.VSITE, "noDots");
+    const html_col = db(saferSite + "_html_key");
+    const shot_col = db(saferSite + "_shot_key");
+    const tb = db(u ? user : process.env.VTB);
+
+    const dShotData =
+      await db`select id, ${shot_col} as "shotKey", ${html_col} as "htmlKey", date from public.${tb} where html is not null ${clause}`; //send a cursor of last id if using limit
+    if (!dShotData[0]) throw { message: "No rows in user's table!" };
+
+    return {
+      dShotData,
+    };
+  } catch (e) {
+    console.error("In getDownloadShotKeys: ", e);
+    return { error: `In getDownloadShotKeys: ${e.message}` };
+  }
+}
+
+async function getSignedUrls(keys) {
+  //makes single call to worker with key[] (prefered over 1 call per url implementation -- economizes invocation).
+  //keys: string[]; keysData: {url, key}[];
+  try {
+    if (!keys.length) throw { message: "keys (shotKeys) array is empty!" };
+
+    const shooterAPI = process.env.SHOOTER_URL + "?getShotUrls=true";
+    const Authorization = await createJWT();
+    const headers = { Authorization, "Content-Type": "application/json" };
+    const options = { headers, method: "POST", body: JSON.stringify({ keys }) };
+
+    const res = await fetch(shooterAPI, options);
+    if (!res.ok)
+      throw { error: "Error getting signedURLs: " + (await res.json().error) };
+
+    return { keysData: await res.json().keysData };
+  } catch (e) {
+    console.error("Error in getSignedUrl: ", e);
+    return { error: "Error in getSignedUrl: " + e.message || "" };
+  }
+}
+
+/**
+ * @returns {Promise<{shotBin: Uint8Array, error: string}>}
+ */
+export async function getDownloadShot(key) {
+  try {
+    //Call in a loop -- Refrieves one shot per call (to fit vercel 4.5mb payload cap)
+    if (!key.trim()) throw { message: "Missing shotkeys!" };
+
+    const shooterAPI = `${process.env.SHOOTER_URL}?getShot=true`;
+    const Authorization = await createJWT();
+    const headers = { Authorization, "Content-Type": "application/json" };
+    const options = { headers, method: "POST", body: JSON.stringify({ key }) };
+
+    const shot = await fetch(shooterAPI, options);
+
+    if (!shot.ok) throw { message: "Could not get shot binary for " + key };
+    return { shotBin: (await shot.json()).shotBin };
+  } catch (e) {
+    console.error("Error in getDownloadShot", e);
+    return { error: "Error in getDownloadShot: " + e.message };
+  }
+}
+
+export async function getHtml(key) {
+  try {
+    const shooterAPI = `${process.env.SHOOTER_URL}?getHtml=true`;
+    const Authorization = await createJWT();
+    const headers = { Authorization, "Content-Type": "application/json" };
+    const options = { headers, method: "POST", body: JSON.stringify({ key }) };
+
+    const html = await fetch(shooterAPI, options);
+
+    if (!html.ok) throw { message: "Could not get html for " + key };
+    return { html: (await html.json()).html };
+  } catch (e) {
+    console.log(e);
+    return { error: "Error in getHtml: " + e.message };
+  }
+}
+
+export async function deleteShot({ ids, user, site }) {
+  //can send an array of shot IDs
+  try {
+    if (!ids.length || !site || !user) throw { message: "Missing Params" };
+
+    !Array.isArray(ids) && (ids = [ids]);
+    const u = db(user);
+    const htmlCol = db(safeSite(site, "_html_key"));
+    const shotCol = db(safeSite(site, "_shot_key"));
+
+    const r1 =
+      await db`delete from "public".${u} where id = any(${ids}) returning ${shotCol}`; //does this return a list of dynamically generated shotCol columns?
+
+    const shotKeysArr = r1.map((s) => s[shotCol]);
+
+    const { error } = await deleteR2Shot(shotKeysArr);
+    if (error) throw { message: "Could not delete shot" };
+
+    return { error: null };
+  } catch (e) {
+    console.error("Error in deleteShot: ", e);
+    return { error: `Could not delete shot: ${e.message}` };
+  }
+}
+
+export async function setShotViewed({ site, ids, user }) {
+  //call from frontend when user opens unviewed images
+  // sets viewed in user's table to true: ids: [] -- will call per opened shot or selectedShots.
+
+  try {
+    if (!user || !site || !ids) throw { message: "Missing parameters" };
+
+    !Array.isArray(ids) && (ids = [ids]);
+    const sS = safeSite(site);
+
+    const u = db(user);
+    await db`update "private".${u} set viewed = true where site = ${site} and id = any(${ids})`;
+
+    //Store viewedId -- does this correctly apply the filter condition to unnest() -- where v->>'site' has value and is != sS?
+    await db`update "private"."users" set "viewedId" = array_append(array(select v from unnest("viewedId") as v where v->>'site' is not null and v->> 'site' != ${sS}), jsonb_build_object('site', ${sS}, "viewedId", ${ids.at(-1)}) ) where user = ${user}`;
+    return { error: null };
+  } catch (e) {
+    console.error("error in setEntryViewed: ", e);
+    return { error: "couldn't setEntryViewed: " + e.message || "" };
+  }
+}
+
+/**
+ * @param {*} user
+ * @returns {Promise<{allSitesUnvieweds?: unviewedType[], error?: string}>}
+ */
+export async function getUnviewedShotIds(user) {
+  //unviewed: {site, count}
+  //Gets the number of unopened keys per site
+  try {
+    const { tableName, userSites } = await getUserSites({ user });
+    if (!userSites) throw { message: "User has no sites" };
+    const u = db(tableName);
+
+    const allSitesUnvieweds0 = userSites.map(async (s) => {
+      try {
+        const uv =
+          await db`select id from "public".${u} where site = ${s.site} and viewed = false`;
+        const unvieweds = uv.map((uv) => uv.id); //gets unviewed ids;
+        return { site: s.site, unvieweds };
+      } catch (e) {
+        console.error("Error in getUnviewedShotIds > userSites.map: ", e);
+        return { site: s.site, unvieweds: [] };
+      }
+    });
+
+    const allSitesUnvieweds = await Promise.all(allSitesUnvieweds0);
+    return { allSitesUnvieweds };
+  } catch (e) {
+    console.error("Error in getUnviewedShotIds. ", e);
+    return { error: "Could not get unviewed keys. " + e.message || "" };
+  }
+}
+
+/**
+ * @param {string} user
+ * @returns {Promise<{crons:Array<{cron: string}>, error?:string}>}
+ */
+export async function getCrons() {
+  // Gets list of available cron schedules; can handle empty crons in frontend -- no need for '!res' throw
+  try {
+    const crons = db`select cron from "private"."crons"`;
+    return { crons };
+  } catch (e) {
+    console.error("Error in getCrons", e);
+    return { error: "Error in getCrons: " + e.message };
   }
 }
 
 //-------> User control
+
 export async function checkUser({ username, password }) {
   //uid is defined only when the pass is matched
   try {
-    if (!username) throw { error: "Missing credentials" };
+    if (!username) throw { message: "Missing credentials" };
     const r =
       await db`select username as user, password as pass, uuid, s."sessionId" as "sid" from "private"."users" left join "private"."sessions" s on uuid = s.uuid where username = ${username}`;
-    if (!r.length) throw { error: "User does not exist" };
+    if (!r.length) throw { message: "User does not exist" };
 
     const samePass = await bcrypt.compare(password, r[0].pass);
     if (samePass) return { user: r[0].user, sid: r[0].sid, uid: r[0].uuid };
     else return { user: r[0].user };
   } catch (e) {
     console.error("Error in checkUser: ", e);
-    return { error: e.error || "Couldn't confirm user." };
+    return { error: e.message || "Couldn't confirm user." };
   }
 }
 
 export async function createUser({ userPass, safeSD }) {
-  //creates a record for new user in user table, optionally adding shot if included.
+  //creates a record for new user in user table, optionally adding cron schedule (safeSD) if included.
   try {
     const { username, password } = userPass;
-    if (!username || !password) throw { error: "Missing parameters" };
+    if (!username || !password) throw { message: "Missing parameters" };
 
     const { user } = await checkUser({ username, password });
-    if (user) throw { error: "User Exists! Sign in instead." };
+    if (user) throw { message: "User Exists! Sign in instead." };
 
     const cookie = createCookie();
     const token = getToken(cookie);
@@ -727,20 +914,20 @@ export async function createUser({ userPass, safeSD }) {
     safeSD && (safeSD = { ...safeSD, active: true });
 
     const sCol = safeSD ? db`, sites` : db``;
-    const sVal = safeSD ? db`, array(${safeSD}::jsonb)` : db``;
+    const sVal = safeSD ? db`, array[${safeSD}::jsonb]` : db``;
 
-    await db`insert into "private"."users" (username, password, uuid ${sCol}) values (${username}, ${safePass}, ${uuid} ${sVal} ) `;
-    await db`insert into "private"."sessions" (uuid, "sessionId") values (${uuid}, ${base64}) `;
+    await db`insert into "private"."users" (username, password, uuid ${sCol}) values (${username}, ${safePass}, ${uuid} ${sVal} )`;
+    await db`insert into "private"."sessions" (uuid, "sessionId") values (${uuid}, ${token})`;
 
     return { cookie, safeSD };
   } catch (e) {
     console.error("Error in createUser: ", e);
-    return { error: "Couldn't create user. " + e.error };
+    return { error: "Couldn't create user. " + e.message || "" };
   }
 }
 
 export async function deleteUser(user, delPass) {
-  //deletes
+  //verify password in top module;
   try {
     let delReady = false;
     let deletionDue;
@@ -748,22 +935,23 @@ export async function deleteUser(user, delPass) {
     if (!delPass) {
       const nextMonth = new Date(Date.now() + 28 * 24 * 3600 * 1000);
       // await db`update "private"."users" set "deletionAttempt" = (case when "deletionAttempt" is not null then "deletionAttempt" else ${nextMonth} end) where username = ${user} returning "deletionAttempt"`;
-      const msg = `An attempt at deleting your account was made, and it will be possible on ${nextMonth.toLocaleString()} with or without your password. To prevent this, simply delete this notification or uncheck \"Delete Account anyway\" in profile.`;
+      const msg = `An attempt at deleting your account was made, and this will be possible on \'${nextMonth.toLocaleString()}\' with or without your password. To prevent this, simply delete this notification or uncheck \"Delete Account anyway\" in profile.`;
 
       const r1 =
-        await db`update "private"."users" set "deletionAttempt" = (case when "deletionAttempt" ->> 'message' is not null then "deletionAttempt" else jsonb_build_object('dueDate', ${nextMonth}, 'message', ${msg} )  ) where username = ${user} returning "deletionAttempt"`;
-      //hope this works when there is no 'message' key in deletion attampw
-      deletionDue = r1?.[0]?.deletionAttempt;
+        await db`update "private"."users" set "deletionAttempt" = (case when "deletionAttempt" ->> 'message' is not null then "deletionAttempt" else jsonb_build_object('deletionDue', ${nextMonth}, 'message', ${msg} )  ) where username = ${user} returning "deletionAttempt"`;
+      deletionDue = r1?.[0]?.deletionDue;
       if (new Date(deletionDue) < new Date()) delReady = true;
     }
 
     if (delPass || delReady) {
+      //count is inaccurate for total shotsTaken -- will need to store count of deleted keys during delEntry and push that to deletedUsers on delete
       const c = await db`select count(*) from "public".${db(user)}`;
       await db`insert into "private"."deletedUsers" (username, shotsTaken) values (${user}, ${c[0]?.count})`;
       await db`delete from "private"."users" where username = ${user}`;
       await db`drop table "public".${db(user)}`;
       return { deletionDue, deleted: true };
     }
+
     return { deletionDue, deleted: false };
   } catch (e) {
     console.error("Error in deleteUser: ", e);
@@ -771,100 +959,99 @@ export async function deleteUser(user, delPass) {
   }
 }
 
-export async function undeleteUser(user) {
+export async function cancelDeleteUser(user) {
   try {
     const r1 =
-      await db`update "private"."users" set "deletionAttempt" = null where username name = ${user}`;
+      await db`update "private"."users" set "deletionAttempt" = null where username = ${user}`;
     return { error: null };
   } catch (e) {
-    return { error: "Trouble undoing Account deletion!" };
+    return { error: "Trouble canceling 'delete account'!" };
   }
 }
 
 /**
- *
  * @param {*} param0
  * @returns {Promise<{tableName?: string, userSites?: any[], maxCrons?: number, error?: string}>}
  */
 export async function getUserSites({ user }) {
   //userSites: {site, cron, range}[]
   try {
-    if (!db) throw { error: "Db uninitialised!" };
-    if (!user) throw { error: "Unknown user!" };
+    if (!db) throw { message: "Db uninitialised!" };
+    if (!user) throw { message: "Unknown user!" };
 
     const r1 =
-      await db`select table_name as t from information_schema.tables where table_schema = 'public' and table_name = ${user}`;
-    const r2 =
-      await db`select sites, "maxCrons" from "private"."user" where username = ${user}`;
+      await db`select table_name as t from information_schema.tables where table_schema = 'public' and table_name = ${user}`; //is this right with public quoted?
 
-    const siteData = { tableName: r1[0]?.t, userSites: r2[0]?.sites };
-    return { ...siteData, maxCrons: r2[0]?.maxCrons };
+    const r2 =
+      await db`select sites, "maxCrons" from "private"."users" where username = ${user}`;
+
+    const siteData = { tableName: r1?.[0]?.t, userSites: r2?.[0]?.sites };
+    return { ...siteData, maxCrons: r2?.[0]?.maxCrons };
   } catch (e) {
     console.error(`Error in getUserSites: `, e);
-    return { error: `Error in getUserSites: ${e.error || e.message}` };
+    return { error: `Error in getUserSites: ${e.message || e.message}` };
   }
 }
 
 export async function getActiveSites(user) {
   //for this, set active: true on all new site/cron addition and false on stale or deactivation
   try {
-    const { userSites, maxCrons } = await getUserSites({ user });
-    if (!maxCrons) throw { error: 'User "maxCrons" missing.' };
+    const { userSites, maxCrons, error } = await getUserSites({ user });
+    if (!maxCrons) throw { message: 'User "maxCrons" missing.' };
+    if (error) throw error;
 
-    const activeSites = userSites?.filter((s) => s.active == true).length;
+    const activeSites = userSites?.filter((s) => s.active == true);
     const canAddSite = activeSites < maxCrons;
 
     return { canAddSite, maxCrons, activeSites, userSites };
   } catch (e) {
-    console.error("in checkActiveSites: ", e);
-    return { canAddSite: false, maxCrons: 0, activeSites: 0 };
+    console.error("in getActiveSites: ", e);
+    return { canAddSite: false, error: e };
   }
 }
 
 export async function setSiteInactive({ site, cron, user }) {
   try {
-    if (!site || !cron) throw { message: "Invalid parameters" };
-
-    if (!db) throw { error: "Db uninitialized!" };
+    if (!site || !cron) throw { message: "Missing parameters" };
+    if (!db) throw { message: "Db uninitialized!" };
 
     const r2 =
       await db`update "private"."users" set sites = array( select (case when s ->> 'site' = ${site} and s ->> 'cron' = ${cron} then jsonb_set(s, '{active}', false ) else s end ) from unnest(sites) as s ) where username = ${user}`;
 
     return { error: null };
   } catch (e) {
-    console.error("Problem in setSiteInactive: ", e);
-    return { error: "Couldn't set siteInactive." };
+    console.error("In setSiteInactive: ", e);
+    return { error: "Couldn't set site inactive." };
   }
 }
 
-// -------------> helper functions
-
 /**
  * @typedef {{id?:number, date?:Date, msg:string, danger?:boolean}} msgData
- */
-/**
  * @param {{msgData: msgData, user?:string, del?:boolean, logError?:boolean }} msgData
  * @returns {Promise<{id: number, error: string}>}
  */
 export async function setNotification({ msgData, user, del, logError }) {
-  //msgData: {id?, msg, danger};
-  //sets notification enmass for users (user[]) or just 1 (user); sets to errorLog: {user, cron, error} when logError = true;
+  //need to set structure for object errors
+
+  //msgData: {id?, date?. msg, danger};
+  //sets notification enmass for users (user[]) or just 1 (user); sets to 'errorLog: {user, cron, error}' when 'logError = true';
   //used in setNotifyEntry: called once on getting ready users, and then later for each user when shot added.
-  //uses same id even for an array of users, but non unique id doesn't pose a problem as it is used in isolated user context.
+  //uses same id even for an array of users -- non unique ids shouldn't pose security problems.
 
   try {
-    if (!db) throw { error: "Db uninitialised" };
+    if (!db) throw { message: "Db uninitialised" };
 
     function ID() {
-      return Math.floor(100000 + Math.random() * 900000);
+      return Math.floor(Math.random() * 1000000);
     }
 
     const { id: i, date: d, msg, danger } = msgData;
 
     //logError msg can be object
-    const message = msg.length ? msg?.trim() : msg;
+    const message = typeof msg == "string" ? msg.trim() : msg;
+
     if ((!message && !del) || (del && !i))
-      throw { error: "Missing parameters" };
+      throw { message: "Missing parameters" };
 
     const u = Array.isArray(user) ? user : [user];
     const id = i || ID();
@@ -875,7 +1062,7 @@ export async function setNotification({ msgData, user, del, logError }) {
       u[0] &&
         (await db`update "private"."users" set notifications = array_append(notifications, ${noti}::jsonb ) where username = any(${u})`);
       logError &&
-        (await db`insert into "private"."errorLog" (error) values (${{ error: message, user }}::jsonb)`);
+        (await db`insert into "private"."errorLog" (error, id) values (${{ message }}, ${id})`);
     } else {
       u[0] &&
         (await db`update "private"."users" set notifications = array(select n from unnest(notifications) as n where n ->> 'id' != ${id}) where username = any(${u}) `);
@@ -886,29 +1073,29 @@ export async function setNotification({ msgData, user, del, logError }) {
     return { id };
   } catch (e) {
     console.error("Error in notifyEntry: ", e);
-    return { error: "Could not set notification. " + e.error };
+    return {
+      error: "Could not set or delete notification. " + e.message || "",
+    };
   }
 }
 
+// -------------> helper functions
 export function safeSite(site, noDots) {
   try {
     console.log(`in safeSite. site: ${site}`);
     site = site.trim();
-    if (!site) throw { error: "No site provided" };
+    if (!site) throw { message: "Missing parameters!" };
     if (!site.startsWith("http")) site = "https://" + site;
-    console.log(`in safeSite. site after 'http' embed: ${site}`);
+    console.log(`in safeSite. site after 'http' adjoin: ${site}`);
 
     const s = new URL(site);
-    if (!s) throw { error: "Couldn't parse URL" };
+    if (!s) throw { message: "Couldn't parse URL" };
     const domain = s.hostname.replace("www.", "");
-    const pathname = s.pathname.endsWith("/")
-      ? s.pathname.substring(0, -1)
-      : s.pathname;
+    const pathname = s.pathname.replace(/\/$/, "");
 
     let ss = domain + pathname;
 
     if (noDots) ss = ss.replace(/[^a-z0-9_]/gi, "_");
-    ss = ss.replace(/^https?:\/\//, "");
     const isNoDot = noDots ? "NoDots " : "";
     console.log(`in safeSite. ${isNoDot}site after http removed: ${site}`);
     return ss;
@@ -920,15 +1107,14 @@ export function safeSite(site, noDots) {
 
 export function safeCron(cron) {
   try {
-    //vaalidates crons based on a format (reduced from normal cF cron templates)
-    //invalid crons: 'd,d/d' (list step), 'd-d,d' (ranged list)
-    // const validCron1 = /^(?:\*|\*\/\d+|\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)(?:\s+$(?:\*|\*\/\d+|\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)){4}$/;
+    //validates crons based on a format (limited pattern set than cloudFlare's)
+    //invalid crons: 'd,d/d' (list step), 'd-d/d' (ranged step)
     const validCron = cron
       .trim()
       .match(
-        /^(((?:\*|\d+)(?:\/\d+)?|\d+((?:-\d+)?(?:,\d+(?:-\d+)?)+))\s+){4}((?:\*|\d+)(?:\/\d+)?|\d+((?:-\d+)?(?:,\d+(?:-\d+)?)+))$/,
+        /^(?:((?:\*)|(?:\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)(?:\/\d+)?)\s+){4}((?:\*)|(?:\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)(?:\/\d+)?)$/,
       );
-    if (!validCron) throw { error: "invalid cron" };
+    if (!validCron) throw { message: "invalid cron" };
     return validCron[0];
   } catch (e) {
     console.error("Safecron error: ", e);
@@ -942,9 +1128,9 @@ export function safeRange(range) {
 
 export function cronToText(cron) {
   try {
-    //gets the text forms of the cronFields:cF. Functions iterateover the cFs appending fillers like "from", "every" depending on cF format
+    //transforms crons into text. By iterating over the cron fields appending fillers like "from", "every" depending on field format
     const sC = safeCron(cron);
-    if (!sC) return { error: null };
+    if (!sC) return { error: "Invalid cron" };
     const [mm, hh, DD, MM, WW] = sC.trim().split(/\s+/);
     const mmText = cronFieldText(mm, "minute");
     const hhText = cronFieldText(hh, "hour");
@@ -953,7 +1139,8 @@ export function cronToText(cron) {
     const WWText = cronFieldText(WW, "weekday");
 
     const parts = [mmText, hhText, DDText, WWText, MMText];
-    const text = parts.join(" - ");
+    // const text = parts.join(" - ");
+    const text = parts.join(" ");
     return text;
   } catch (e) {
     console.error("Error in cronToText: ", e);
@@ -961,27 +1148,35 @@ export function cronToText(cron) {
   }
 
   function cronFieldText(cronField, timeUnit) {
-    if (cronField.includes("/")) {
+    //an earlier version of this had all now `match` method as `includes` methods -- I don't forsee any problems here?
+    if (cronField.match(/\//)) {
       const [base, step] = cronField.split("/");
 
       switch (base) {
+        //every
         case "*":
           return `every ${step} ${timeUnit}s `;
 
-        case base.includes(","):
-          let dArr = [];
+        //list or ranged list
+        case base.match(/,/):
+          let dArr = []; //[from mon to tue, wed to thur, on fri, from d, d]
           cronField.split(",").forEach((d, i) => {
-            if (d.includes("-")) {
+            if (d.match(/\-/)) {
               const tSpan = timeSpan(timeUnit, d.split("-"));
-              dArr.push(`${i == 0 ? "from" : ""} ${tSpan}`);
-            } else dArr.push(`${i == 0 ? "on" : ""} ${timeSpan(timeUnit, d)}`);
+              dArr.push(`${i == 0 ? "from " : ""}` + `${tSpan}`);
+            } else
+              dArr.push(`${i == 0 ? "on " : ""}` + `${timeSpan(timeUnit, d)}`);
           });
 
-          return `every ${step} ${timeUnit}s ${dArr
-            .slice(0, -1)
-            .join(", ")} and ${dArr.at(-1)}`;
+          const moreD = dArr.length > 1;
 
-        case base.includes("-"):
+          return `every ${step} ${timeUnit}s ${
+            moreD
+              ? `${dArr.slice(0, -1).join(", ")}, and ${dArr.at(-1)}`
+              : `${dArr.toString()}`
+          } `;
+
+        case base.match(/\-/):
           const tSpan = timeSpan(timeUnit, base.split("-"));
           return `every ${step} ${timeUnit}s from ${tSpan}`;
 
@@ -991,20 +1186,26 @@ export function cronToText(cron) {
             base,
           )}`;
       }
-    } else if (cronField.includes(",")) {
+    } else if (cronField.match(/,/)) {
       const dArr = [];
       cronField.split(",").forEach((d, i) => {
-        if (d.includes("-")) {
+        if (d.match(/\-/)) {
+          //without 'from' append, you've got "monday to thursday" != from "monday to thursday"
           dArr.push(timeSpan(timeUnit, d.split("-")));
         } else dArr.push(timeSpan(timeUnit, d));
       });
 
-      const tSpan = dArr.slice(0, -1).join(", ");
-      return `on ${timeUnit}s ${tSpan} and ${dArr.at(-1)}`;
-    } else if (cronField.includes("-")) {
+      const s = dArr.length > 1 ? "s" : "";
+      const tSpan = s
+        ? `${dArr.slice(0, -1).join(", ")}, and ${dArr.at(-1)}`
+        : dArr.toString();
+
+      return `on ${timeUnit}${s} ${tSpan}`;
+    } else if (cronField.match(/\-/)) {
       return `from ${timeUnit}s ${timeSpan(timeUnit, cronField.split("-"))}`;
     } else if (cronField == "*") return `every ${timeUnit}`;
-    else if (!isNaN(cronField)) return `on ${timeUnit} ${cronField}`;
+    else if (!isNaN(cronField))
+      return `on ${timeUnit} ${timeSpan(timeUnit, cronField)}`;
   }
 }
 
@@ -1013,23 +1214,23 @@ function timeSpan(timeUnit, d) {
   const t = [];
   const d0 = Array.isArray(d) ? d : [d];
   for (const d of d0) {
-    if (timeUnit == "weekday") t.push(timeText(d, null));
-    else if (timeUnit == "month") t.push(timeText(null, d));
+    if (timeUnit == "weekday") t.push(timeText({ WW: d }));
+    else if (timeUnit == "month") t.push(timeText({ MM: d }));
     else t.push(d);
   }
 
   const l2 = t.length == 2;
   return l2 ? `${t.join(" to ")}` : `${t[0]}`;
 
-  function timeText(WW, MM) {
+  function timeText({ WW, MM }) {
     const weekDay = {
-      1: "sunday",
-      2: "monday",
-      3: "tuesday",
-      4: "wednesday",
-      5: "thursday",
-      6: "friday",
-      7: "saturday",
+      0: "sunday",
+      1: "monday",
+      2: "tuesday",
+      3: "wednesday",
+      4: "thursday",
+      5: "friday",
+      6: "saturday",
     };
 
     const month = {
@@ -1052,62 +1253,71 @@ function timeSpan(timeUnit, d) {
   }
 }
 
+function isDate(date) {
+  if (typeof date == "string") date = new Date(date);
+  return date instanceof Date && !isNaN(date.valueOf());
+}
+
 //------------ User session
-export async function createSession(password, username) {
+export async function createSession(password, username, expires) {
   //call after validateSession -- which checks that a session is not active.
   try {
-    if (!password || !username) throw { error: "Missing credentials" };
+    if (!password || !username) throw { message: "Missing credentials" };
 
     const cookie = createCookie();
     const token = getToken(cookie);
     const { uid } = await checkUser({ username, password });
     if (uid)
-      await db`update "private"."sessions" set "sessionId" = ${base64}, expires = now() where uuid = ${uid}`;
-    else
-      await db`insert into "private"."sessions" ("sessionId", uuid, expires) values (${base64}, ${uid}, now())`;
+      await db`update "private"."sessions" set "sessionId" = ${token}, expires = ${expires} where uuid = ${uid}`;
+    else return { error: "Unknown user!" };
+    //can set fingerprint ID -- nope, handled elsewhere
 
-    return { cookie, error: "" };
+    return { cookie };
   } catch (e) {
     console.error("Error in createSession: ", e);
-    return { cookie: "", error: "Couldn't create session!" };
+    return { error: "Couldn't create session!" };
   }
 }
 
 /**
- * @param {{token: string, expires?: Date | null }} args
- * @returns {Promise<{ user: string, uid: string, error?: string }>}
+ * @param {{token: string, expires?: Date }} args
+ * @returns {Promise<{ user: string, uid: string, joined: string, error?: string, isAdmin: number }>}
  */
 
-export async function getSession({ base64, expires }) {
+export async function getSession({ token, expires }) {
+  //scrap isAdmin -- will need to do db check before retrieving sensitive info, so must get admin status in function -- same thing -- I can get from validateSession in said function.
   //Call with expires to update lastLog else it retrieves session. if (expires): absence of error indicates success;
   try {
-    if (!base64) throw { error: "No base64 string" };
+    if (!token) throw { message: "No Cookie Token" };
 
-    let res;
+    let r;
 
     if (!expires) {
-      res =
-        await db`select u.username as user, uuid from "private"."sessions" inner join "private"."users" u on u.uuid = uuid where "sessionId" = ${base64}`;
+      r =
+        await db`select u.username as user, uuid, expires, u.created as joined from "private"."sessions" inner join "private"."users" u on uuid = u.uuid where "sessionId" = ${token}`;
 
-      if (!res[0]) throw { error: "Unknown user" };
+      if (!r[0]) throw { message: "Unknown user" };
+      if (new Date() > new Date(r[0].expires))
+        throw { message: "Session expired!" };
 
-      console.log("Validated User: ", res);
+      console.log("in getSession. Valid user: ", r);
     } else {
-      await db`update "private"."sessions" set "lastLog" = now(), expires = ${expires} where "sessionId" = ${base64}`;
+      await db`update "private"."sessions" set "lastLog" = now(), expires = ${expires} where "sessionId" = ${token}`;
     }
 
-    return { user: res?.[0]?.user || "", uid: res?.[0]?.uuid || "" };
+    const r1 = { joined: r?.[0]?.joined, isAdmin: r?.[0]?.isAdmin };
+    return { user: r?.[0]?.user, uid: r?.[0]?.uuid, ...r1 };
   } catch (e) {
     console.error("Error in validateSession: ", e);
-    return { error: "Trouble validating user! " + e.error };
+    return { error: "Trouble validating user! " + e.message || "" };
   }
 }
 
-export async function deleteSession(base64) {
+export async function deleteSession(token) {
   try {
-    if (!base64) throw { error: "Empty base64 string" };
+    if (!token) throw { message: "Empty token string" };
 
-    await db`update "private"."sessions" set "sessionId" = null where "sessionId" = ${base64}`;
+    await db`update "private"."sessions" set "sessionId" = null where "sessionId" = ${token}`;
     return { error: null };
   } catch (e) {
     console.error("in deleteSession. Error: ", e);
