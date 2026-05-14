@@ -264,6 +264,7 @@ export default function Shots({
 
   //downloadCache helper, returns the shotBinary or Html in file format
   const getDownloadCache = useCallback(
+    //can I pass this fn as a prop and it calls  useQueryClient() the same way
     async ({ key, date, isHtml }: getDownloadCache) => {
       //can handle HTML -- when !isShot;
       //abstract in download fn
@@ -284,7 +285,7 @@ export default function Shots({
       if (!fileData && isHtml)
         fileData = (await getHtml({ htmlKey: key })).html;
 
-      if (!fileData) throw { mmessage: "FileData undefined" };
+      if (!fileData) throw { message: "FileData undefined" };
       else return { fileName, fileType, fileData, date };
     },
     [],
@@ -561,6 +562,7 @@ export default function Shots({
                 viewSelectedShots={viewSelectedShots}
                 selectedShots={selectedShots}
                 onSelectedShots={onSelectedShots}
+                getDownloadCache={getDownloadCache}
               />
             </motion.div>
           </div>
@@ -600,6 +602,7 @@ export default function Shots({
                 viewSelectedShots={viewSelectedShots}
                 selectedShots={selectedShots}
                 onSelectedShots={onSelectedShots}
+                getDownloadCache={getDownloadCache}
               />
             </motion.div>
 
