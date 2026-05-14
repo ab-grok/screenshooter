@@ -11,19 +11,18 @@ import { unviewedType, shotData, downloadProps } from "./types";
 import { createCookie, createJWT, getToken } from "./actions";
 import { formatDate } from "./dateformatter";
 
-function DB(conn) {
+async function DB(conn) {
   if (!db && conn) {
-    db = postgres(conn, {
+    return postgres(conn, {
       debug: (connection, query, params) => {
         console.log("Query: ", query);
         console.log("Params: ", params);
       },
     });
   }
-  return db;
 }
 
-const db = DB(process.env.DB_CONN);
+const db = await DB(process.env.DB_CONN);
 // let db: Sql<{}> = DB(process.env.DB_CONN);
 
 //------> shooterWorker actions
@@ -37,7 +36,7 @@ export async function makeEntry({ shotData }) {
     if (!shotKey || !htmlKey || !user || !site)
       throw { message: "Missing params" };
 
-    const sS = safeSite(site, "noDots");
+    const sS = await safeSite(site, "noDots");
     const u = db(user);
 
     if (!sS)
@@ -111,7 +110,7 @@ export async function delPrevEntry({ cron, site, user }) {
     // storeLimit.setDate(storeLimit.getDate() - sD);
 
     //dels both shot and html -- htmlKey will be derived in worker
-    const shotCol = db(`${safeSite(site, "noDots")}_shot_key`);
+    const shotCol = db(`${await safeSite(site, "noDots")}_shot_key`);
     const u = db(user);
 
     //Q: I assume r2 returns rows of all deleted keys?
@@ -279,7 +278,7 @@ export async function getCronSites(cron) {
 export async function updateShotSchema({ site, user, del }) {
   //creates a table for user in root db with default cols. Can also delete siteCols (site)
   try {
-    const saferSite = safeSite(site, "noDots");
+    const saferSite = await safeSite(site, "noDots");
     if (!saferSite) throw { message: "Unsafe site: " + site };
     const { tableName, userSites } = await getUserSites({ user });
 
@@ -332,7 +331,7 @@ export async function updateUserSites({ safeSD, user, del, re }) {
     }
 
     //can upd range in both re and upd so set safeRange regardless; sR = 'invalid value' indicates to del range
-    let sR = safeRange(range);
+    let sR = await safeRange(range);
 
     const newR = sR?.start != range?.start && sR?.end != range.end; //there's invalid sR
 
@@ -553,8 +552,8 @@ export async function getUserShots(shotSet) {
 
     if (!sites.length) throw { message: "User has no sites" };
 
-    const saferSite = safeSite(site, "noDots");
-    const sS = safeSite(site);
+    const saferSite = await safeSite(site, "noDots");
+    const sS = await safeSite(site);
     const hC = db(`${saferSite}_html_key`);
     const sC = db(`${saferSite}_shot_key`);
     const u = db(user);
@@ -628,7 +627,7 @@ export async function getVisitorShots(shotSet) {
     //is using let in destructure like this ok, since I reassign to id or will eslint throw on vercel deploy?
     const { id, next: n } = shotSet;
 
-    const saferSite = safeSite(process.env.VSITE, "noDots");
+    const saferSite = await safeSite(process.env.VSITE, "noDots");
     const vShot = db(`${saferSite}_shot_key`);
     const vHtml = db(`${saferSite}_html_key`);
     const vtb = db(process.env.VTB);
@@ -704,7 +703,7 @@ export async function getDownloadShotKeys({ site, user, downloadProps }) {
     if (unviewed) clause = db`${clause} and viewed = false`;
     if (t1) clause = db`${clause} and date > ${t1} and date < ${t2}`;
 
-    const saferSite = safeSite(u ? site : process.env.VSITE, "noDots");
+    const saferSite = await safeSite(u ? site : process.env.VSITE, "noDots");
     const html_col = db(saferSite + "_html_key");
     const shot_col = db(saferSite + "_shot_key");
     const tb = db(u ? user : process.env.VTB);
@@ -791,8 +790,8 @@ export async function deleteShot({ ids, user, site }) {
 
     !Array.isArray(ids) && (ids = [ids]);
     const u = db(user);
-    const htmlCol = db(safeSite(site, "_html_key"));
-    const shotCol = db(safeSite(site, "_shot_key"));
+    const htmlCol = db(await safeSite(site, "_html_key"));
+    const shotCol = db(await safeSite(site, "_shot_key"));
 
     const r1 =
       await db`delete from "public".${u} where id = any(${ids}) returning ${shotCol}`; //does this return a list of dynamically generated shotCol columns?
@@ -817,7 +816,7 @@ export async function setShotViewed({ site, ids, user }) {
     if (!user || !site || !ids) throw { message: "Missing parameters" };
 
     !Array.isArray(ids) && (ids = [ids]);
-    const sS = safeSite(site);
+    const sS = await safeSite(site);
 
     const u = db(user);
     await db`update "private".${u} set viewed = true where site = ${site} and id = any(${ids})`;
@@ -906,8 +905,8 @@ export async function createUser({ userPass, safeSD }) {
     const { user } = await checkUser({ username, password });
     if (user) throw { message: "User Exists! Sign in instead." };
 
-    const cookie = createCookie();
-    const token = getToken(cookie);
+    const cookie = await createCookie();
+    const token = await getToken(cookie);
     const uuid = v4();
     const safePass = await bcrypt.hash(password, 11);
 
@@ -1080,7 +1079,7 @@ export async function setNotification({ msgData, user, del, logError }) {
 }
 
 // -------------> helper functions
-export function safeSite(site, noDots) {
+export async function safeSite(site, noDots) {
   try {
     console.log(`in safeSite. site: ${site}`);
     site = site.trim();
@@ -1105,7 +1104,7 @@ export function safeSite(site, noDots) {
   }
 }
 
-export function safeCron(cron) {
+export async function safeCron(cron) {
   try {
     //validates crons based on a format (limited pattern set than cloudFlare's)
     //invalid crons: 'd,d/d' (list step), 'd-d/d' (ranged step)
@@ -1122,140 +1121,8 @@ export function safeCron(cron) {
   }
 }
 
-export function safeRange(range) {
+export async function safeRange(range) {
   if (!(isNaN(range?.start) || isNaN(range?.end))) return range;
-}
-
-export function cronToText(cron) {
-  try {
-    //transforms crons into text. By iterating over the cron fields appending fillers like "from", "every" depending on field format
-    const sC = safeCron(cron);
-    if (!sC) return { error: "Invalid cron" };
-    const [mm, hh, DD, MM, WW] = sC.trim().split(/\s+/);
-    const mmText = cronFieldText(mm, "minute");
-    const hhText = cronFieldText(hh, "hour");
-    const DDText = cronFieldText(DD, "day");
-    const MMText = cronFieldText(MM, "month");
-    const WWText = cronFieldText(WW, "weekday");
-
-    const parts = [mmText, hhText, DDText, WWText, MMText];
-    // const text = parts.join(" - ");
-    const text = parts.join(" ");
-    return text;
-  } catch (e) {
-    console.error("Error in cronToText: ", e);
-    return "";
-  }
-
-  function cronFieldText(cronField, timeUnit) {
-    //an earlier version of this had all now `match` method as `includes` methods -- I don't forsee any problems here?
-    if (cronField.match(/\//)) {
-      const [base, step] = cronField.split("/");
-
-      switch (base) {
-        //every
-        case "*":
-          return `every ${step} ${timeUnit}s `;
-
-        //list or ranged list
-        case base.match(/,/):
-          let dArr = []; //[from mon to tue, wed to thur, on fri, from d, d]
-          cronField.split(",").forEach((d, i) => {
-            if (d.match(/\-/)) {
-              const tSpan = timeSpan(timeUnit, d.split("-"));
-              dArr.push(`${i == 0 ? "from " : ""}` + `${tSpan}`);
-            } else
-              dArr.push(`${i == 0 ? "on " : ""}` + `${timeSpan(timeUnit, d)}`);
-          });
-
-          const moreD = dArr.length > 1;
-
-          return `every ${step} ${timeUnit}s ${
-            moreD
-              ? `${dArr.slice(0, -1).join(", ")}, and ${dArr.at(-1)}`
-              : `${dArr.toString()}`
-          } `;
-
-        case base.match(/\-/):
-          const tSpan = timeSpan(timeUnit, base.split("-"));
-          return `every ${step} ${timeUnit}s from ${tSpan}`;
-
-        default:
-          return `every ${step} ${timeUnit}s starting ${timeSpan(
-            timeUnit,
-            base,
-          )}`;
-      }
-    } else if (cronField.match(/,/)) {
-      const dArr = [];
-      cronField.split(",").forEach((d, i) => {
-        if (d.match(/\-/)) {
-          //without 'from' append, you've got "monday to thursday" != from "monday to thursday"
-          dArr.push(timeSpan(timeUnit, d.split("-")));
-        } else dArr.push(timeSpan(timeUnit, d));
-      });
-
-      const s = dArr.length > 1 ? "s" : "";
-      const tSpan = s
-        ? `${dArr.slice(0, -1).join(", ")}, and ${dArr.at(-1)}`
-        : dArr.toString();
-
-      return `on ${timeUnit}${s} ${tSpan}`;
-    } else if (cronField.match(/\-/)) {
-      return `from ${timeUnit}s ${timeSpan(timeUnit, cronField.split("-"))}`;
-    } else if (cronField == "*") return `every ${timeUnit}`;
-    else if (!isNaN(cronField))
-      return `on ${timeUnit} ${timeSpan(timeUnit, cronField)}`;
-  }
-}
-
-function timeSpan(timeUnit, d) {
-  //timeD: [time, d];
-  const t = [];
-  const d0 = Array.isArray(d) ? d : [d];
-  for (const d of d0) {
-    if (timeUnit == "weekday") t.push(timeText({ WW: d }));
-    else if (timeUnit == "month") t.push(timeText({ MM: d }));
-    else t.push(d);
-  }
-
-  const l2 = t.length == 2;
-  return l2 ? `${t.join(" to ")}` : `${t[0]}`;
-
-  function timeText({ WW, MM }) {
-    const weekDay = {
-      0: "sunday",
-      1: "monday",
-      2: "tuesday",
-      3: "wednesday",
-      4: "thursday",
-      5: "friday",
-      6: "saturday",
-    };
-
-    const month = {
-      1: "jan",
-      2: "feb",
-      3: "mar",
-      4: "apr",
-      5: "may",
-      6: "jun",
-      7: "jul",
-      8: "aug",
-      9: "sep",
-      10: "oct",
-      11: "nov",
-      12: "dec",
-    };
-
-    if (WW) return weekDay[WW] || WW;
-    if (MM) return month[MM] || MM;
-  }
-}
-
-function isDate(date) {
-  if (typeof date == "string") date = new Date(date);
-  return date instanceof Date && !isNaN(date.valueOf());
 }
 
 //------------ User session
@@ -1264,8 +1131,8 @@ export async function createSession(password, username, expires) {
   try {
     if (!password || !username) throw { message: "Missing credentials" };
 
-    const cookie = createCookie();
-    const token = getToken(cookie);
+    const cookie = await createCookie();
+    const token = await getToken(cookie);
     const { uid } = await checkUser({ username, password });
     if (uid)
       await db`update "private"."sessions" set "sessionId" = ${token}, expires = ${expires} where uuid = ${uid}`;

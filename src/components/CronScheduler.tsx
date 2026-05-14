@@ -24,7 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { scheduleCron, parseApiError } from "@/lib/api";
 
 interface CronSchedulerProps {
   user: string;
@@ -78,7 +77,10 @@ function validateCronExpression(cron: string): boolean {
 function extractHostname(url: string): string {
   try {
     let processedUrl = url.trim();
-    if (!processedUrl.startsWith("http://") && !processedUrl.startsWith("https://")) {
+    if (
+      !processedUrl.startsWith("http://") &&
+      !processedUrl.startsWith("https://")
+    ) {
       processedUrl = `https://${processedUrl}`;
     }
     const urlObj = new URL(processedUrl);
@@ -92,7 +94,10 @@ function extractHostname(url: string): string {
 function isValidUrl(url: string): boolean {
   try {
     let processedUrl = url.trim();
-    if (!processedUrl.startsWith("http://") && !processedUrl.startsWith("https://")) {
+    if (
+      !processedUrl.startsWith("http://") &&
+      !processedUrl.startsWith("https://")
+    ) {
       processedUrl = `https://${processedUrl}`;
     }
     new URL(processedUrl);
@@ -118,7 +123,15 @@ const VALUE_OPTIONS: Record<TimeUnit, number[]> = {
   months: [1, 2, 3, 6],
 };
 
-const WEEK_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEK_DAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
   const [url, setUrl] = useState("");
@@ -163,12 +176,12 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
 
     try {
       const site = extractHostname(url);
-      await scheduleCron({
-        site,
-        cron: cronExpression,
-        range: "full", // TODO: Make configurable if needed
-        user,
-      });
+      // await scheduleCron({
+      //   site,
+      //   cron: cronExpression,
+      //   range: "full", // TODO: Make configurable if needed
+      //   user,
+      // });
 
       setSuccess(true);
       setTimeout(() => {
@@ -181,7 +194,7 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
       setCronConfig({ unit: "hours", value: 1 });
       setCustomCron("");
     } catch (err) {
-      setError(parseApiError(err));
+      // setError(parseApiError(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -220,7 +233,7 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
       <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Search className="h-5 w-5 text-primary" />
+            <Search className="text-primary h-5 w-5" />
             Website URL
           </CardTitle>
         </CardHeader>
@@ -241,16 +254,14 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
                   href={url.startsWith("http") ? url : `https://${url}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary"
+                  className="text-muted-foreground hover:text-primary absolute top-1/2 right-3 -translate-y-1/2"
                   aria-label="Open URL in new tab"
                 >
                   <ExternalLink className="h-4 w-4" />
                 </a>
               )}
             </div>
-            {urlError && (
-              <p className="text-xs text-destructive">{urlError}</p>
-            )}
+            {urlError && <p className="text-destructive text-xs">{urlError}</p>}
           </div>
 
           {/* Live Preview */}
@@ -259,11 +270,11 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden rounded-lg border border-border bg-muted/30"
+              className="border-border bg-muted/30 overflow-hidden rounded-lg border"
             >
-              <div className="flex items-center justify-between border-b border-border bg-muted/50 px-3 py-2">
-                <span className="text-xs text-muted-foreground">Preview</span>
-                <span className="text-xs font-mono text-muted-foreground">
+              <div className="border-border bg-muted/50 flex items-center justify-between border-b px-3 py-2">
+                <span className="text-muted-foreground text-xs">Preview</span>
+                <span className="text-muted-foreground font-mono text-xs">
                   {extractHostname(url)}
                 </span>
               </div>
@@ -284,7 +295,7 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
       <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Clock className="h-5 w-5 text-primary" />
+            <Clock className="text-primary h-5 w-5" />
             Schedule Configuration
           </CardTitle>
         </CardHeader>
@@ -383,9 +394,9 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
                     className={`font-mono ${cronError ? "border-destructive" : ""}`}
                   />
                   {cronError && (
-                    <p className="text-xs text-destructive">{cronError}</p>
+                    <p className="text-destructive text-xs">{cronError}</p>
                   )}
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-muted-foreground text-xs">
                     Format: minute hour day-of-month month day-of-week
                   </p>
                 </motion.div>
@@ -394,14 +405,18 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
           </div>
 
           {/* Schedule Preview */}
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
+          <div className="border-border bg-muted/30 rounded-lg border p-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Schedule:</span>
-              <span className="text-sm font-medium">{getScheduleDescription()}</span>
+              <span className="text-muted-foreground text-sm">Schedule:</span>
+              <span className="text-sm font-medium">
+                {getScheduleDescription()}
+              </span>
             </div>
             <div className="mt-2 flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Cron:</span>
-              <code className="text-sm font-mono text-primary">{cronExpression}</code>
+              <span className="text-muted-foreground text-sm">Cron:</span>
+              <code className="text-primary font-mono text-sm">
+                {cronExpression}
+              </code>
             </div>
           </div>
 
@@ -426,7 +441,7 @@ export function CronScheduler({ user, onScheduled }: CronSchedulerProps) {
                 exit={{ opacity: 0, y: -10 }}
               >
                 <Alert className="border-primary/50 bg-primary/10">
-                  <Check className="h-4 w-4 text-primary" />
+                  <Check className="text-primary h-4 w-4" />
                   <AlertDescription className="text-primary">
                     Cron job scheduled successfully!
                   </AlertDescription>

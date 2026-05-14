@@ -1,3 +1,7 @@
+// JWT_SECRET	Secret
+// SHOOTERAPI	Plain text
+// SHOOTER_AGENT	Plain text
+
 import puppeteer from "@cloudflare/puppeteer";
 import * as jose from "jose";
 

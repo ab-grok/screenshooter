@@ -1,4 +1,5 @@
 "use server";
+
 import { cookies } from "next/headers";
 import {
   createSession,
@@ -67,7 +68,7 @@ export async function validateSession() {
   const cookie = await getCookie("session");
   if (!cookie) return { error: "Invalid session" };
 
-  const token = getToken(cookie)!;
+  const token = (await getToken(cookie))!;
 
   const { user, joined, isAdmin } = await getSession({ token });
   if (!user) return { error: "Unknown user" };
@@ -100,7 +101,7 @@ export async function logUser(username: string, password: string) {
 
 export async function unLogUser() {
   const cookie = await getCookie("session");
-  const token = getToken(cookie!);
+  const token = await getToken(cookie!);
 
   const { error } = await deleteSession();
   await deleteCookie("session");
@@ -111,7 +112,7 @@ export async function signUser({ username, password, siteData }: signUser) {
   //validate session first -- not needed.
   const userPass = { username, password };
 
-  const safeSD = getSafeSD(siteData as siteData)!;
+  const safeSD = await getSafeSD(siteData as siteData)!;
 
   const { cookie, error } = await createUser({ userPass, safeSD });
   if (error || !cookie) return { error };
@@ -183,7 +184,7 @@ export async function scheduleShot(safeSD: siteData) {
   const { user, error: e0 } = await validateSession();
   if (e0) return { error: e0 };
 
-  safeSD = getSafeSD(safeSD)!;
+  safeSD = (await getSafeSD(safeSD))!;
   if (!safeSD) return { error: "Unsafe parameters!" };
 
   const SDprops = { safeSD, user, del: false, re: false, ...safeSD };
@@ -210,7 +211,7 @@ export async function reactivateCron(safeSD: siteData) {
   const { error: e1, user } = await validateSession();
   if (e1) return { error: e1 };
 
-  safeSD = getSafeSD(safeSD)!;
+  safeSD = (await getSafeSD(safeSD))!;
   if (!safeSD) return { error: "Unsafe parameters" };
 
   const reProps = { safeSD, user, del: false };
@@ -234,7 +235,7 @@ export async function deactivateCron(site: string, cron: string) {
   const { user, error: e0 } = await validateSession();
   if (!user) return { error: e0 };
 
-  const { site: sS, cron: sC } = getSafeSD({ site, cron })!;
+  const { site: sS, cron: sC } = (await getSafeSD({ site, cron }))!;
 
   if (!sS || !sC) return { error: "Unsafe site data!" };
 
@@ -260,7 +261,7 @@ export async function deleteCron(safeSD: siteData) {
   const { user, error: e1 } = await validateSession();
   if (e1) return { error: e1 };
 
-  safeSD = getSafeSD(safeSD)!;
+  safeSD = (await getSafeSD(safeSD))!;
   if (!safeSD) return "Unsafe parameters";
 
   const delProps = { safeSD, user, del: true, re: false, ...safeSD };
@@ -392,25 +393,25 @@ export async function getUnviewedIds() {
 }
 
 //-----------> Helpers
-function getSafeSD(safeSD: siteData) {
+async function getSafeSD(safeSD: siteData) {
   //for quick param validation -- safeSD consuming functions also perform safety checks
 
   let { site, cron, range } = safeSD;
-  site = safeSite(site)!;
-  cron = safeCron(cron);
-  range = safeRange(range);
+  site = (await safeSite(site))!;
+  cron = await safeCron(cron);
+  range = await safeRange(range);
 
   if (!site || !cron) return null;
   return { site, cron, range };
 }
 
-export function getToken(cookie: string) {
+export async function getToken(cookie: string) {
   if (!cookie) return null;
   return encodeHexLowerCase(sha256(new TextEncoder().encode(cookie)));
 }
 
 //alter consuming files in server.js
-export function createCookie() {
+export async function createCookie() {
   const bytes = crypto.getRandomValues(new Uint8Array(20));
   return encodeBase32LowerCaseNoPadding(bytes);
 }
