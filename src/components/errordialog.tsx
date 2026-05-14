@@ -1,3 +1,4 @@
+//src/components/Errordialog.tsx
 "use client";
 
 import { useRootContext } from "@/app/(main)/rootcontext";
@@ -38,14 +39,14 @@ export function ErrDialog({ msg, danger }: { msg?: string; danger?: boolean }) {
   return (
     <div
       className={cn(
-        "absolute top-3 z-5 w-1/2 sm:left-1/4 left-1/10 min-w-[16rem] sm:min-w-[20rem] rounded-3xl ring-2 shadow-lg shadow-black bg-black/70 text-white/80 font-semibold flex items-center justify-center p-1",
+        "absolute top-3 left-1/10 z-5 flex w-1/2 min-w-[16rem] items-center justify-center rounded-3xl bg-black/70 p-1 font-semibold text-white/80 shadow-lg ring-2 shadow-black sm:left-1/4 sm:min-w-[20rem]",
         anim.a ? "flex" : "hidden",
         danger || errBox?.danger ? "ring-red-600" : "ring-green-600",
       )}
     >
       <div
         className={cn(
-          "overflow-hidden rounded-xl bg-neutral-800/20 flex items-center ",
+          "flex items-center overflow-hidden rounded-xl bg-neutral-800/20",
           anim.b ? "h-[5rem]" : "max-h-0.5",
         )}
       >

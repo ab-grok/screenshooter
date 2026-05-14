@@ -14,6 +14,8 @@ import { ShotCard } from "./ShotCard";
 import { preserveScrollType } from "@/lib/usePreserveScroll";
 import type {
   delShotType,
+  file,
+  getDownloadCache,
   handleViewed,
   selectedShot,
   shotData,
@@ -34,6 +36,7 @@ interface GalleryProps {
   delSelectedShots: number;
   downloadSelectedShots: number;
   viewSelectedShots: number;
+  getDownloadCache: ({ key, date }: getDownloadCache) => Promise<file>;
   onOpenedShot: (shot: shotData) => void;
   onDeleteShot: ({ ids }: delShotType) => void; //deletes selectedShots when active
   onSelectedShots: (
@@ -64,6 +67,7 @@ export function Gallery({
   delSelectedShots,
   viewSelectedShots,
   downloadSelectedShots,
+  getDownloadCache,
   onOpenedShot, //unneeded: will select shots here and pass to selected shot -- false need in parent for selectedViewer
   onDeleteShot,
   onSelectedShots,
@@ -144,11 +148,15 @@ export function Gallery({
   const handleDownloadSelectedShots = useCallback(async () => {
     try {
       const selIds = selectedShots.map((s) => s.id!);
-      const downloadShots = siteShots
+      const selShotKeys = siteShots
         ?.filter((s) => selIds.includes(s.id))
-        .map((s) => ({ ...s.file, date: s.date }))!;
+        .map((s) => ({ key: s.shotKey, date: s.date }))!;
 
-      const { error } = await download(downloadShots);
+      const selShots = await Promise.all(
+        selShotKeys.map((s) => getDownloadCache(s)),
+      );
+
+      const { error } = await download(selShots);
       if (error) throw error;
     } catch (e) {
       console.error("in Gallery handleDownloadSelShots: ", e);

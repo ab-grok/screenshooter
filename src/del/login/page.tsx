@@ -14,7 +14,7 @@ import z from "zod";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { ErrDialog } from "@/components/Errordialog";
+import { ErrDialog } from "@/components/Errorsdialog";
 import { logUser } from "@/lib/sessions";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -98,14 +98,14 @@ export default function Login() {
   }
 
   return (
-    <div className="w-full h-full overflow-auto p-2 px-5 bg-black">
+    <div className="h-full w-full overflow-auto bg-black p-2 px-5">
       <ErrDialog msg={dialog.msg} danger={dialog.danger} />
       <Form {...logForm}>
         <form
           onSubmit={logForm.handleSubmit(logSubmitted)}
-          className=" flex overflow-hidden p-2 text-white/80 flex-col space-y-[1rem] "
+          className="flex flex-col space-y-[1rem] overflow-hidden p-2 text-white/80"
         >
-          <section className="font-semibold select-none text-center w-full h-[3rem] text-4xl ">
+          <section className="h-[3rem] w-full text-center text-4xl font-semibold select-none">
             Enter into club
             <Separator className="bg-neutral-500" />
           </section>
@@ -121,17 +121,17 @@ export default function Login() {
                       {a.charAt(0).toUpperCase() + a.slice(1, a.length)}
                     </FormLabel>
                     <FormControl>
-                      <div className="flex relative">
+                      <div className="relative flex">
                         <Input
                           {...field}
                           ref={a == "password" ? passRef : nameRef}
                           onInput={inputChanged}
-                          className="rounded-full h-[3rem] overflow-hidden shadow-md focus:shadow-none ring-white"
+                          className="h-[3rem] overflow-hidden rounded-full shadow-md ring-white focus:shadow-none"
                           placeholder=""
                         />
                         <span
                           className={cn(
-                            `absolute top-[25%] text-stone-500 font-bold p-1 h-1/2 items-center truncate rounded-full bg-white/20 hidden`,
+                            `absolute top-[25%] hidden h-1/2 items-center truncate rounded-full bg-white/20 p-1 font-bold text-stone-500`,
                             a == "password" && currInput?.name == "p"
                               ? "flex"
                               : "hidden",
@@ -153,8 +153,8 @@ export default function Login() {
             type="submit"
             disabled={loading}
             className={cn(
-              " transition-all select-none hover:bg-green-600/60 cursor-pointer min-h-[4rem] overflow-hidden shadow-md rounded-full hover:-translate-y-0.5",
-              buttonAnim && "scale-[99.5%] hover:translate-y-0.5 shadow-none",
+              "min-h-[4rem] cursor-pointer overflow-hidden rounded-full shadow-md transition-all select-none hover:-translate-y-0.5 hover:bg-green-600/60",
+              buttonAnim && "scale-[99.5%] shadow-none hover:translate-y-0.5",
             )}
           >
             <span

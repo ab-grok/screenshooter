@@ -1,7 +1,9 @@
+//src/app/(main)/layout.tsx
+
 "use client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RootLayoutContext } from "./rootcontext";
-import { ErrDialog } from "@/components/Errordialog";
+import { ErrDialog } from "@/components/Errorsdialog";
 const queryClient = new QueryClient();
 
 // // Client-side (not Worker)
