@@ -18,7 +18,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ErrDialog } from "../../components/ErrorDialog";
+import { ErrDialog } from "@/components/ErrorDialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { logUser } from "@/lib/actions";
