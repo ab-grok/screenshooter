@@ -8,16 +8,21 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { useForm } from "react-hook-form";
-import { logSchema, logType } from "./actions";
 import { zodResolver } from "@hookform/resolvers/zod";
-import z from "zod";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { ErrDialog } from "@/components/Errorsdialog";
-import { logUser } from "@/lib/sessions";
+import {
+  ChangeEvent,
+  InputEventHandler,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { ErrDialog } from "@/components/ErrorDialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { logUser } from "@/lib/actions";
+import { logSchema, logType } from "@/lib/zodtypes";
 
 export default function Login() {
   type logInput = "u" | "p" | "";
@@ -45,14 +50,18 @@ export default function Login() {
 
   async function logSubmitted(values: logType) {
     setLoading(true);
+
     const { error } = await logUser(values.password, values.username);
     setLoading(false);
+
+    //set to context -- not local
     setDialog({ msg: error || "Successful!", danger: error ? true : false });
   }
 
   useEffect(() => {
     //separate into user and pass effects -- better optimized.
     if (initRender.current) {
+      //This initialises an element for calculating the current width of input text, on every change -- used for anim.
       canvasRef.current = document.createElement("canvas");
       initRender.current = false;
       return;
@@ -71,8 +80,9 @@ export default function Login() {
 
   function inputChanged(e: ChangeEvent<HTMLInputElement>) {
     const name = e.target.name as "username" | "password";
-    console.log("name from inputChanged: ", name);
     logForm.setValue(name, e.target.value || "");
+    console.log("name from inputChanged: ", name);
+
     setCurrInput((p) => ({
       name: name == "username" ? "u" : "p",
       count: e.target.value.length ?? 0,
@@ -85,6 +95,7 @@ export default function Login() {
     if (canvasRef.current && I.value && I.value.length! > 5) {
       const context = canvasRef.current.getContext("2d")!;
       context.font = getComputedStyle(I).font || "16px san-serif";
+
       const metrics = context.measureText(I.value);
       inputOffset.current.pass = metrics.width + 8;
     }
@@ -103,10 +114,10 @@ export default function Login() {
       <Form {...logForm}>
         <form
           onSubmit={logForm.handleSubmit(logSubmitted)}
-          className="flex flex-col space-y-[1rem] overflow-hidden p-2 text-white/80"
+          className="flex flex-col space-y-4 overflow-hidden p-2 text-white/80"
         >
-          <section className="h-[3rem] w-full text-center text-4xl font-semibold select-none">
-            Enter into club
+          <section className="h-12 w-full text-center text-4xl font-semibold select-none">
+            Log in
             <Separator className="bg-neutral-500" />
           </section>
           <section className="flex flex-col space-y-3">
@@ -118,15 +129,15 @@ export default function Login() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>
-                      {a.charAt(0).toUpperCase() + a.slice(1, a.length)}
+                      {a.charAt(0).toUpperCase() + a.slice(1)}
                     </FormLabel>
                     <FormControl>
                       <div className="relative flex">
                         <Input
                           {...field}
                           ref={a == "password" ? passRef : nameRef}
-                          onInput={inputChanged}
-                          className="h-[3rem] overflow-hidden rounded-full shadow-md ring-white focus:shadow-none"
+                          onChange={inputChanged}
+                          className="h-12 overflow-hidden rounded-full shadow-md ring-white focus:shadow-none"
                           placeholder=""
                         />
                         <span
@@ -138,7 +149,7 @@ export default function Login() {
                           )}
                           style={{ left: `${inputOffset.current.pass + 8}px` }}
                         >
-                          Trying to hack the system I see...
+                          Writing password...
                         </span>
                       </div>
                     </FormControl>
@@ -153,7 +164,7 @@ export default function Login() {
             type="submit"
             disabled={loading}
             className={cn(
-              "min-h-[4rem] cursor-pointer overflow-hidden rounded-full shadow-md transition-all select-none hover:-translate-y-0.5 hover:bg-green-600/60",
+              "min-h-16 cursor-pointer overflow-hidden rounded-full shadow-md transition-all select-none hover:-translate-y-0.5 hover:bg-green-600/60",
               buttonAnim && "scale-[99.5%] shadow-none hover:translate-y-0.5",
             )}
           >

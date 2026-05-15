@@ -400,6 +400,7 @@ export function Gallery({
                   site={site}
                   toggleSelect={toggleSelectShot}
                   swiperId={i}
+                  getDownloadCache={getDownloadCache}
                 />
               </SwiperSlide>
             ))}

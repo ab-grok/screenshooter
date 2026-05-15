@@ -96,7 +96,7 @@ export async function logUser(username: string, password: string) {
   if (error || !cookie) return { error };
 
   const { error: e2 } = await setCookie({ name: "session", cookie, expires });
-  if (e2) return { error: e2 };
+  return { error: e2 };
 }
 
 export async function unLogUser() {
@@ -105,7 +105,7 @@ export async function unLogUser() {
 
   const { error } = await deleteSession();
   await deleteCookie("session");
-  return error;
+  return { error };
 }
 
 export async function signUser({ username, password, siteData }: signUser) {

@@ -1,7 +1,7 @@
 // components/ShotCard.tsx
 "use client";
 
-import React, { RefObject, useEffect } from "react";
+import React from "react";
 import Image from "next/image";
 import { useState, useCallback } from "react";
 import { motion } from "framer-motion";
@@ -15,20 +15,23 @@ import {
 } from "@/lib/dateformatter";
 import type {
   delShotType,
+  file,
+  getDownloadCache,
   handleViewed,
   selectedShot,
-  shot,
+  shotData,
 } from "@/lib/types";
 import { useDownloader } from "@/lib/downloader";
 
 interface ShotCardProps {
   site: string;
-  shot: shot;
+  shot: shotData;
   isOpen?: boolean;
-  onOpened: (shot: shot) => void;
+  onOpened: (shot: shotData) => void;
   onViewed: ({ id }: handleViewed) => Promise<void>;
   onDelete: ({ ids }: delShotType) => void;
   toggleSelect: ({}: selectedShot) => void;
+  getDownloadCache: ({ key, date }: getDownloadCache) => Promise<file>;
   swiperId: number;
 }
 
@@ -41,6 +44,7 @@ export function ShotCard({
   onDelete,
   toggleSelect,
   swiperId,
+  getDownloadCache,
 }: ShotCardProps) {
   const [markingViewed, setMarkingViewed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -66,21 +70,24 @@ export function ShotCard({
     [markingViewed, localViewed],
   );
 
-  //refix
   const downloadShot = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation(); //prevent this click from triggering card's onClick
-    const { error } = await download({ ...shot.file, date: shot.date });
+    const s = await getDownloadCache({ key: shot.shotKey, date: shot.date });
+    const { error } = await download(s);
   }, []);
 
-  //Retrieve html from R2 here!
+  //Calls getDownloadCache for html and writes to clipboard!
   const copyHtml = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await navigator.clipboard.writeText(shot.html);
+      const hProp = { key: shot.htmlKey, date: shot.date, isHtml: true };
+      const html = await getDownloadCache(hProp);
+      if (!html) throw "Html undefined!";
+      await navigator.clipboard.writeText(html.fileData as string);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (er) {
-      console.error("Failed to copy HTML:", er);
+    } catch (e) {
+      console.error("in ShotCard, copyHtml: Failed to copy HTML:", e);
       //setError component
     }
   }, []);
@@ -90,8 +97,9 @@ export function ShotCard({
     //call downloader passing html as text/plain or perhaps there's a type for that
     e.stopPropagation();
     try {
-      const file = { fileData: shot.html, fileType: "text/plain" };
-      const { error } = await openInNewTab({ ...file, fileName: "" });
+      const hProp = { key: shot.htmlKey, date: shot.date, isHtml: true };
+      const html = await getDownloadCache(hProp);
+      const { error } = await openInNewTab(html);
       if (error) throw error;
     } catch (e) {
       console.error("Failed to open html in newpage: ", e);
@@ -154,20 +162,19 @@ export function ShotCard({
         <CardContent className="flex h-full flex-col p-0">
           {/* Image container */}
           <div className="bg-muted relative aspect-video w-full overflow-hidden">
-            {shot.file.fileType == "text/plain" ? (
+            {/* {shot.file.fileType == "text/plain" ? (
               <div className="flex h-full w-full items-center justify-center text-2xl font-semibold transition-transform duration-300">
                 {shot.file.fileData}
               </div>
-            ) : (
-              <Image
-                src={`data:image/png;base64,${shot.file.fileData}`}
-                alt={`Screenshot from ${site} ${formatRelativeTime(shot.date)}`}
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                placeholder="blur"
-              />
-            )}
-
-            {/* Overlay with actions on hover */}
+            ) } */}
+            (
+            <Image
+              src={shot.shotUrl}
+              alt={`Screenshot from ${site} ${formatRelativeTime(shot.date)}`}
+              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              placeholder="blur"
+            />
+            ){/* Overlay with actions on hover? */}
             <motion.div
               initial={{ opacity: 0 }}
               whileHover={{ opacity: 1 }}
@@ -196,7 +203,7 @@ export function ShotCard({
                 )}
               </Button>
               {!localViewed && (
-                //Why mark viewed onClick of an eye button and not on click of card
+                //mark as viewed
                 <Button
                   size="sm"
                   variant="secondary"
@@ -215,7 +222,7 @@ export function ShotCard({
           <div className="flex flex-1 flex-col gap-2 p-3">
             {/* HTML preview */}
             <p className="text-muted-foreground line-clamp-2 flex-1 font-mono text-xs">
-              {truncateHtml(shot.html, 100)}
+              Click for html!
             </p>
 
             {/* Date */}

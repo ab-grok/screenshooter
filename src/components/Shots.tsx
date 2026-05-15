@@ -270,13 +270,14 @@ export default function Shots({
       //abstract in download fn
       //check cache presence
       const queryClient = useQueryClient();
-      const shotCache: any = queryClient.getQueryData([site, "downloadShots"])!;
-      const htmlCache: any = queryClient.getQueryData([site, "html"]);
+      let cache: any;
+      if (!isHtml) cache = queryClient.getQueryData([site, "downloadShots"])!;
+      if (isHtml) cache = queryClient.getQueryData([site, "html"]);
 
       //format 'isShot/user/site_date_time' to 'site date time';
       const fileName = key.split("/").slice(2).join().replace(/_/g, " ");
       const fileType = isHtml ? "text/html" : "image/png";
-      let fileData = isHtml ? htmlCache[key] : shotCache[key];
+      let fileData = cache[key];
 
       // is image
       if (!fileData && !isHtml)
@@ -285,7 +286,7 @@ export default function Shots({
       if (!fileData && isHtml)
         fileData = (await getHtml({ htmlKey: key })).html;
 
-      if (!fileData) throw { message: "FileData undefined" };
+      if (!fileData) throw { message: "FileData not in cache or R2 storage" };
       else return { fileName, fileType, fileData, date };
     },
     [],

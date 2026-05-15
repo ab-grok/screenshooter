@@ -1,6 +1,4 @@
 import { redirect } from "next/navigation";
-import { validateSession } from "@/lib/server";
-import { ErrDialog } from "@/components/Errorsdialog";
 export default async function AuthLayout({
   children,
 }: {
