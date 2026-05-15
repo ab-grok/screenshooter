@@ -1,4 +1,4 @@
-//src/components/Errordialog.tsx
+//src/components/ErrorDialog.tsx
 "use client";
 
 import { useRootContext } from "@/app/(main)/rootcontext";
