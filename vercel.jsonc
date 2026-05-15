@@ -1,8 +1,11 @@
-// {
-//   "functions": {
-//     "src/lib/server.js": {
-//       "maxDuration": 59,
-//       "region": "us-east-1"
-//     }
-//   }
-// }
+{
+  "functions": {
+    "src/lib/server.js": {
+      "maxDuration": 59,
+      "region": "us-east-1",
+    },
+  },
+  "env": {
+    "NEXT_CACHE_DISABLED": "true",
+  },
+}
