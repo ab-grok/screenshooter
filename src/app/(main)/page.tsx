@@ -2,7 +2,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Navbar } from "@/components/Navbar";
 import {
   handleDownload,
   optimisticUnvieweds,
@@ -14,6 +13,7 @@ import {
 import { useQuerySites, useUserData } from "./reactquery";
 import Shots from "@/components/Shots";
 import { usePreserveScroll } from "@/lib/usePreserveScroll";
+import Navbar from "@/components/Navbar";
 
 export default function HomePage() {
   const [selectedSite, setSelectedSite] = useState<siteData>(); //unlogged users have no sites, if selectedSite = undefined set to visitor site/cnn.com; account for site active state

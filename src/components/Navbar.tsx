@@ -1,7 +1,7 @@
 // src/components/Navbar.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -21,7 +21,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { SitesTab } from "./SitesTab";
 import type {
   handleDownload,
   siteData,
@@ -30,6 +29,7 @@ import type {
   userData,
 } from "@/lib/types";
 import Image from "next/image";
+import SitesTab from "./SitesTab";
 
 interface NavbarProps {
   sitesLoading: boolean;
@@ -53,7 +53,7 @@ interface NavbarProps {
   // TODO: Add user info prop when auth is implemented
 }
 
-export function Navbar({
+function Navbar({
   sites,
   currId,
   userData,
@@ -311,3 +311,5 @@ export function Navbar({
     </motion.header>
   );
 }
+
+export default React.memo(Navbar);

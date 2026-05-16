@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import type { siteData, unviewedType } from "@/lib/types";
+import React from "react";
 
 interface SitesTabProps {
   sites: siteData[] | undefined;
@@ -25,7 +26,7 @@ interface SitesTabProps {
   onSelectSite: (site: siteData) => void;
 }
 
-export function SitesTab({
+function SitesTab({
   sites,
   selectedSite,
   allSitesUnvieweds,
@@ -153,3 +154,5 @@ export function SitesTab({
     </DropdownMenu>
   );
 }
+
+export default React.memo(SitesTab);

@@ -3,14 +3,19 @@
 //Components/Gallery
 //Consumed as Shots > Gallery
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  useMemo,
+} from "react";
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Navigation, Keyboard, A11y } from "swiper/modules";
 import type { Swiper as SwiperType } from "swiper";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { ShotCard } from "./ShotCard";
 import { preserveScrollType } from "@/lib/usePreserveScroll";
 import type {
   delShotType,
@@ -25,6 +30,7 @@ import "swiper/css";
 import "swiper/css/navigation";
 import { useMutateViewed, useQueryShots } from "@/app/(main)/reactquery";
 import { useDownloader } from "@/lib/downloader";
+import ShotCard from "./ShotCard";
 
 interface GalleryProps {
   site: string;
@@ -57,7 +63,7 @@ function ShotSkeleton() {
   );
 }
 
-export function Gallery({
+function Gallery({
   site,
   siteShots,
   openedShot, //for altering viewed
@@ -445,3 +451,5 @@ export function Gallery({
     </div>
   );
 }
+
+export default React.memo(Gallery);

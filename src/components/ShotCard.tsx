@@ -35,7 +35,7 @@ interface ShotCardProps {
   swiperId: number;
 }
 
-export function ShotCard({
+function ShotCard({
   shot,
   isOpen = false,
   onOpened,
@@ -222,7 +222,7 @@ export function ShotCard({
           <div className="flex flex-1 flex-col gap-2 p-3">
             {/* HTML preview */}
             <p className="text-muted-foreground line-clamp-2 flex-1 font-mono text-xs">
-              Click for html!
+              Click to download html (soon)!
             </p>
 
             {/* Date */}
@@ -238,3 +238,5 @@ export function ShotCard({
     </motion.div>
   );
 }
+
+export default React.memo(ShotCard);

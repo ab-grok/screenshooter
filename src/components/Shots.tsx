@@ -25,7 +25,7 @@ import {
   unviewedType,
 } from "@/lib/types";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
-import {
+import React, {
   Dispatch,
   SetStateAction,
   useCallback,
@@ -38,11 +38,11 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
 import { motion } from "framer-motion";
 import { SelectedViewer } from "./SelectedViewer";
-import { Gallery } from "./Gallery";
 import { preserveScrollType, usePreserveScroll } from "@/lib/usePreserveScroll";
 import { delShot, getDbShotKeys, getUnviewedIds } from "@/lib/actions";
 import { formatDate } from "@/lib/dateformatter";
 import { useQueryClient } from "@tanstack/react-query";
+import Gallery from "./Gallery";
 
 type state = {
   value: boolean;
@@ -71,10 +71,9 @@ type ShotsProp = {
   }: optimisticUnvieweds) => void; //what's this for?
 };
 
-export default function Shots({
+function Shots({
   refresh,
   site,
-  onAddSite,
   preserveScroll,
   selectedShots,
   deleteSelectedShots,
@@ -85,6 +84,7 @@ export default function Shots({
   downloadCurrShotAndBefore,
   downloadSelectedShots,
   viewSelectedShots,
+  onAddSite,
   onSelectedShots,
   onlocalUnviewed,
   onAllSitesUnvieweds,
@@ -627,3 +627,5 @@ export default function Shots({
     </main>
   );
 }
+
+export default React.memo(Shots);
