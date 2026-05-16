@@ -87,7 +87,8 @@ export function useMutateShotBinary(site: string) {
     { shotKey: string }
   >({
     mutationFn: async ({ shotKey }) => {
-      const { shotBin } = await getR2Shot(shotKey);
+      const { shotBin, error } = await getR2Shot(shotKey);
+      if (error) throw { error };
       return { shotBin, shotKey };
     },
     onSuccess: ({ shotBin, shotKey }) => {
@@ -114,7 +115,8 @@ export function useMutateHtml(site: string) {
     { htmlKey: string }
   >({
     mutationFn: async ({ htmlKey }) => {
-      const { html } = await getR2Html(htmlKey);
+      const { error, html } = await getR2Html(htmlKey);
+      if (error) throw { error };
       return { html, htmlKey };
     },
     onSuccess: ({ html, htmlKey }) => {
@@ -140,7 +142,7 @@ export function useMutateViewed(site: string) {
   const queryClient = useQueryClient();
 
   const mutateViewed = useMutation<
-    { error: null },
+    { error: null | string },
     { error: string },
     { ids: number[] },
     { prevData: any }
@@ -194,7 +196,7 @@ export function useMutateSites() {
 export function useQueryShots(site: string) {
   const shotQuery = useInfiniteQuery<
     shots,
-    string,
+    { error: string },
     InfiniteData<shots>,
     [string, string],
     { id: any; next: boolean }
@@ -203,7 +205,8 @@ export function useQueryShots(site: string) {
     queryFn: async ({ pageParam }) => {
       const { id, next } = pageParam;
       //when error: all props besides error will be null;
-      const shots = await getShots({ id, next, site });
+      const { error, ...shots } = await getShots({ id, next, site });
+      if (error) throw { error };
       return shots;
     },
     getNextPageParam: (lastPage) => ({
@@ -239,7 +242,8 @@ export function useQueryCrons() {
   >({
     queryKey: ["sites"],
     queryFn: async () => {
-      const { crons } = await getCrons();
+      const { error, crons } = await getCrons();
+      if (error) throw { error };
       return { crons };
     },
     staleTime: Infinity,
@@ -257,7 +261,11 @@ export function useQueryCrons() {
 export function useUserData() {
   const userQuery = useQuery<userData, { error: string }>({
     queryKey: ["userData"],
-    queryFn: async () => await getUserData(),
+    queryFn: async () => {
+      const { error, ...rest } = await getUserData();
+      if (error) throw error;
+      return rest;
+    },
     staleTime: Infinity,
   });
 

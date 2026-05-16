@@ -181,10 +181,7 @@ async function Fetch({ Auth, cron, env, body, endpoint, method }) {
 
   console.log("in Fetch", { Auth, cron, body, env, endpoint, method });
   !Auth && (Auth = await createJWT({ cron, env }));
-  const auth = await createJWT(cron, env);
-
   console.log("In Fetch, Cron, env: ", { cron, env });
-  console.log("In Fetch, auth from createJWT", { auth });
 
   console.log("In Fetch, passed Auth after reassignmment", { Auth });
   const headers = {
@@ -199,6 +196,7 @@ async function Fetch({ Auth, cron, env, body, endpoint, method }) {
   }); //this accessible by await req.json() or await req.json().body?
 
   const data = await res?.json();
+  console.log("In fetch", { Auth, data });
   return { Auth, data };
 }
 

@@ -40,7 +40,7 @@ import * as jose from "jose";
 
 //---> session managment
 export async function getCookie(name: "session" | "analytics") {
-  const cookie = (await cookies()).get(name)?.value;
+  const cookie = (await cookies())?.get(name)?.value;
   return cookie;
 }
 
@@ -132,10 +132,10 @@ export async function getUserData() {
   // notifications: InfiniteQuery; notepad, will have own functions.
   const { user, joined, isAdmin } = await validateSession();
 
-  if (!user) throw { error: "In getUserData, Unknown user" };
+  if (!user) return { error: "In getUserData, Unknown user" };
 
   const { maxCrons, activeSites, userSites, error } = await getActiveSites();
-  if (error) throw { error };
+  if (error) return { error };
 
   return { user, joined, maxCrons, activeSites, userSites, isAdmin };
 }
@@ -155,7 +155,7 @@ export async function deleteAccount(password?: string) {
   const { success, reset } = await delAccountRate.limit(`user:${user}`);
   if (!success) {
     const error = `Too many attempts, try again on ${new Date(reset).toLocaleString()}`;
-    throw { error };
+    return { error };
   }
 
   const delPass = uid ? true : false; //uid is defined on pass match
@@ -292,10 +292,10 @@ export async function testSite() {
 
 export async function getSites() {
   const { user, error: e1 } = await validateSession();
-  if (e1) throw { error: e1 };
+  if (e1) return { error: e1 };
 
   const { userSites, error: e2 } = await getUserSites({ user });
-  if (e2) throw { error: e2 };
+  if (e2) return { error: e2 };
 
   return { userSites };
 }
@@ -311,13 +311,11 @@ export async function getShots(prop: shotProp) {
   const { userSites, error: e2 } = await getUserSites({ user });
 
   if (userSites?.length) {
-    const { error, ...shots } = await getUserShots({ ...prop, user: user! });
-    if (error) throw error;
-    return shots;
+    const shotsData = await getUserShots({ ...prop, user: user! });
+    return shotsData;
   } else {
-    const { error, ...shots } = await getVisitorShots(prop);
-    if (error) throw error;
-    return shots;
+    const shotsData = await getVisitorShots(prop);
+    return shotsData;
   }
 }
 
@@ -326,13 +324,13 @@ export async function getR2Shot(shotKey: string) {
   //can always retrieve shotKeys by ID or keys; Then filter that against shots stored in useQuery -- then retrieve only unhad
 
   const { shotBin, error } = await getDownloadShot(shotKey);
-  if (!shotBin) throw { error };
+  if (!shotBin) return { error };
   return { shotBin };
 }
 
 export async function getR2Html(htmlKey: string) {
   const { html, error } = await getHtml(htmlKey);
-  if (error) throw { error };
+  if (error) return { error };
   return { html };
 }
 
@@ -357,13 +355,13 @@ export async function getCronSchedules() {
 
 export async function delShot({ ids, site }: delShotType) {
   //deletes a single shot
-  if (!ids || !site) throw { error: "Missing params!" };
+  if (!ids || !site) return { error: "Missing params!" };
 
   const { user } = await validateSession();
-  if (!user) throw { error: "Unknown User!" };
+  if (!user) return { error: "Unknown User!" };
 
   const { error } = await deleteShot({ user, ids, site });
-  if (error) throw { error };
+  if (error) return { error };
 
   return { error: null };
 }
@@ -374,10 +372,10 @@ export async function setViewed({
   site,
 }: Omit<shotProp, "id"> & { ids: number[] }) {
   const { user } = await validateSession();
-  if (!user) throw { error: "Unknown user!" };
+  if (!user) return { error: "Unknown user!" };
 
   const { error } = await setShotViewed({ ids, site, user });
-  if (error) throw { error };
+  if (error) return { error };
 
   return { error: null };
 }
