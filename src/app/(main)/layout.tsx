@@ -13,7 +13,7 @@ const queryClient = new QueryClient();
 // const fingerprint = result.visitorId; // e.g., 'a1b2c3d4'
 // // Send fingerprint to Worker for logging
 
-export default async function MainLayout({
+export default function MainLayout({
   children,
 }: {
   children: React.ReactNode;

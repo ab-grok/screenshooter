@@ -55,7 +55,9 @@ function SitesTab({
               ) : sitesLoading ? (
                 <Loader2 className="text-primary h-6 w-6 animate-spin" />
               ) : (
-                "Select a site"
+                <p className="text-primary hover:text-secondary">
+                  "Select a site"
+                </p>
               )}
             </span>
             {selectedSiteUnviewed?.unvieweds?.length && (
