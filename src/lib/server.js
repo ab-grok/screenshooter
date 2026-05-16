@@ -1089,7 +1089,7 @@ export async function safeSite(site, noDots) {
 
     const s = new URL(site);
     if (!s) throw { message: "Couldn't parse URL" };
-    const domain = s.hostname.replace("www.", "").replace(/^https?:\/\//, "");
+    const domain = s.hostname.replace("www.", "");
     const pathname = s.pathname.replace(/\/$/, "");
 
     console.log("in SafeSite", { domain, pathname });
@@ -1097,7 +1097,7 @@ export async function safeSite(site, noDots) {
 
     if (noDots) ss = ss.replace(/[^a-z0-9_]/gi, "_");
     const isNoDot = noDots ? "NoDots " : "";
-    console.log(`in safeSite. ${isNoDot}site after http removed: ${site}`);
+    console.log(`in safeSite. ${isNoDot}site after http removed: ${ss}`);
     return ss;
   } catch (e) {
     console.error("Safesite error: ", e);
