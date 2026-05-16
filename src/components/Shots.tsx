@@ -499,7 +499,7 @@ export default function Shots({
           >
             <AlertCircle className="h-4 w-4" />
             <AlertDescription className="flex flex-col gap-3">
-              <span>{shotsError}</span>
+              <span>{shotsError.error}</span>
               <Button
                 variant="outline"
                 size="sm"
