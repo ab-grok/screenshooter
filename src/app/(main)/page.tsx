@@ -55,7 +55,7 @@ export default function HomePage() {
   const currId = useMemo(() => {
     if (!selectedShots) return { first: 0, last: 0 };
     //get from selectedShot. will be the first and last selected (for including middle shots in the calc)
-    const first = selectedShots[0].id;
+    const first = selectedShots[0]?.id;
     const last = selectedShots.at(-1)?.id;
 
     return { first, last };
@@ -159,7 +159,7 @@ export default function HomePage() {
   //       const sitesData = await getSites();
   //       setSites(sitesData);
   //       if (sitesData.length > 0) {
-  //         setSelectedSite(sitesData[0].site); //from userSites dropdown menu
+  //         setSelectedSite(sitesData[0]?.site); //from userSites dropdown menu
   //       }
   //     } catch (err) {
   //       setError(parseApiError(err));
