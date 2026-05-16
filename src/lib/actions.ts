@@ -135,9 +135,8 @@ export async function getUserData() {
   if (!user) return { error: "In getUserData, Unknown user" };
 
   const { maxCrons, activeSites, userSites, error } = await getActiveSites();
-  if (error) return { error };
 
-  return { user, joined, maxCrons, activeSites, userSites, isAdmin };
+  return { user, joined, maxCrons, activeSites, userSites, isAdmin, error };
 }
 
 export async function getNotepad(update: "update" | undefined) {}
@@ -311,11 +310,11 @@ export async function getShots(prop: shotProp) {
   const { userSites, error: e2 } = await getUserSites({ user });
 
   if (userSites?.length) {
-    const shotsData = await getUserShots({ ...prop, user: user! });
-    return shotsData;
+    const shots = await getUserShots({ ...prop, user: user! });
+    return shots;
   } else {
-    const shotsData = await getVisitorShots(prop);
-    return shotsData;
+    const shots = await getVisitorShots(prop);
+    return shots;
   }
 }
 
@@ -324,14 +323,12 @@ export async function getR2Shot(shotKey: string) {
   //can always retrieve shotKeys by ID or keys; Then filter that against shots stored in useQuery -- then retrieve only unhad
 
   const { shotBin, error } = await getDownloadShot(shotKey);
-  if (!shotBin) return { error };
-  return { shotBin };
+  return { shotBin, error };
 }
 
 export async function getR2Html(htmlKey: string) {
   const { html, error } = await getHtml(htmlKey);
-  if (error) return { error };
-  return { html };
+  return { html, error };
 }
 
 //gets the shotKeys for downloads,

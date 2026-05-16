@@ -259,7 +259,7 @@ export function useQueryCrons() {
 }
 
 export function useUserData() {
-  const userQuery = useQuery<userData, { error: string }>({
+  const userQuery = useQuery<userData, { error: any }>({
     queryKey: ["userData"],
     queryFn: async () => {
       const { error, ...rest } = await getUserData();

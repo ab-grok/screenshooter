@@ -18,12 +18,12 @@ export type cursor = { id: number; next?: boolean };
 export type timePeriod = { from: Date; to?: Date };
 
 export type userData = {
-  user: string;
-  joined: string;
-  isAdmin: number;
-  maxCrons: number | undefined;
-  activeSites: shotData[] | undefined;
-  userSites: shotData[] | undefined;
+  user?: string;
+  joined?: string;
+  isAdmin?: number;
+  maxCrons?: number | undefined;
+  activeSites?: shotData[] | undefined;
+  userSites?: shotData[] | undefined;
 };
 
 export type handleDownload = {

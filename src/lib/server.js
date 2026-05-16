@@ -1005,7 +1005,7 @@ export async function getActiveSites(user) {
     return { canAddSite, maxCrons, activeSites, userSites };
   } catch (e) {
     console.error("in getActiveSites: ", e);
-    return { canAddSite: false, error: e };
+    return { canAddSite: false, error: e.message || e };
   }
 }
 

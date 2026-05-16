@@ -24,7 +24,6 @@ import type {
 import "swiper/css";
 import "swiper/css/navigation";
 import { useMutateViewed, useQueryShots } from "@/app/(main)/reactquery";
-import { setViewed } from "@/lib/actions";
 import { useDownloader } from "@/lib/downloader";
 
 interface GalleryProps {
