@@ -98,6 +98,7 @@ export default {
 
       const { Auth, data } = await Fetch(fetchProps);
 
+      console.log("In scheduled", { Auth, data });
       const { readySites, id, error } = data;
       if (!readySites) throw "Could not get readySites for Cron: " + cron;
 
@@ -117,6 +118,7 @@ async function takeShots({ readySites, id, cron, Auth, env }) {
   try {
     const browser = await puppeteer.launch(env.CHROME);
 
+    console.log("in takeShots", { readySites, id, cron, Auth, env });
     //loop may break free tier's 10ms CPU time limit. -- eased now since API calls are made to
     for (const { site, range, user } of readySites) {
       try {
@@ -176,6 +178,8 @@ async function takeShots({ readySites, id, cron, Auth, env }) {
 
 async function Fetch({ Auth, cron, env, body, endpoint, method }) {
   //body:{};
+
+  console.log("in Fetch", { Auth, cron, body, endpoint, method });
   !Auth && (Auth = await createJWT({ cron, env }));
 
   const headers = {

@@ -270,7 +270,7 @@ export function useUserData() {
 
 export function useQuerySites() {
   //isFetching = true when fetching in background.
-  const sitesQuery = useQuery<siteData[], string>({
+  const sitesQuery = useQuery<siteData[], { error: string }>({
     queryKey: ["sites"],
     queryFn: async () => {
       const userSites = (await getSites()).userSites as siteData[];

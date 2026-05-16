@@ -988,7 +988,7 @@ export async function getUserSites({ user }) {
     return { ...siteData, maxCrons: r2?.[0]?.maxCrons };
   } catch (e) {
     console.error(`Error in getUserSites: `, e);
-    return { error: `Error in getUserSites: ${e.message || e.message}` };
+    return { error: `Error in getUserSites: ${e.message || e}` };
   }
 }
 
@@ -1089,9 +1089,10 @@ export async function safeSite(site, noDots) {
 
     const s = new URL(site);
     if (!s) throw { message: "Couldn't parse URL" };
-    const domain = s.hostname.replace("www.", "");
+    const domain = s.hostname.replace("www.", "").replace(/^https?:\/\//, "");
     const pathname = s.pathname.replace(/\/$/, "");
 
+    console.log("in SafeSite", { domain, pathname });
     let ss = domain + pathname;
 
     if (noDots) ss = ss.replace(/[^a-z0-9_]/gi, "_");
