@@ -81,7 +81,7 @@ export async function cronToText(cron: string) {
 
   async function cronFieldText(cronField: string, timeUnit: string) {
     //an earlier version of this had all now `match` method as `includes` methods -- I don't forsee any problems here?
-    if (cronField.includes("/")) {
+    if (cronField?.includes("/")) {
       const [base, step] = cronField.split("/");
 
       switch (true) {
@@ -90,10 +90,10 @@ export async function cronToText(cron: string) {
           return `every ${step} ${timeUnit}s `;
 
         //list or ranged list
-        case base.includes(","):
+        case base?.includes(","):
           let dArr: string[] = []; //[from mon to tue, wed to thur, on fri, from d, d]
           cronField.split(",").forEach((d, i) => {
-            if (d.includes("-")) {
+            if (d?.includes("-")) {
               const tSpan = timeSpan(timeUnit, d.split("-"));
               dArr.push(`${i == 0 ? "from " : ""}` + `${tSpan}`);
             } else
@@ -109,7 +109,7 @@ export async function cronToText(cron: string) {
           } `;
 
         //span
-        case base.includes("-"):
+        case base?.includes("-"):
           const tSpan = timeSpan(timeUnit, base.split("-"));
           return `every ${step} ${timeUnit}s from ${tSpan}`;
 
@@ -119,10 +119,10 @@ export async function cronToText(cron: string) {
             base,
           )}`;
       }
-    } else if (cronField.includes(",")) {
+    } else if (cronField?.includes(",")) {
       const dArr: string[] = [];
       cronField.split(",").forEach((d, i) => {
-        if (d.includes("-")) {
+        if (d?.includes("-")) {
           //without 'from' append, you've got "monday to thursday" != from "monday to thursday"
           dArr.push(timeSpan(timeUnit, d.split("-")));
         } else dArr.push(timeSpan(timeUnit, d));
@@ -134,7 +134,7 @@ export async function cronToText(cron: string) {
         : dArr.toString();
 
       return `on ${timeUnit}${s} ${tSpan}`;
-    } else if (cronField.includes("-")) {
+    } else if (cronField?.includes("-")) {
       const tU =
         timeUnit == "month" || timeUnit == "weekday" ? "" : ` ${timeUnit}`;
       return `from${tU} ${timeSpan(timeUnit, cronField.split("-"))}`;

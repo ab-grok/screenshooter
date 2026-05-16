@@ -46,7 +46,7 @@ export function useMutateDel(site: string) {
             ...oldData,
             pages: oldData.pages.map((page) => ({
               ...page,
-              shots: page.shotsData.filter((s) => !ids.includes(s.id)),
+              shots: page.shotsData.filter((s) => !ids?.includes(s.id)),
             })),
           };
         },
@@ -159,7 +159,7 @@ export function useMutateViewed(site: string) {
             pages: oldData.pages.map((page) => ({
               ...page,
               shots: page.shotsData.map((s: shotData) =>
-                ids.includes(s.id) ? { ...s, viewed: true } : s,
+                ids?.includes(s.id) ? { ...s, viewed: true } : s,
               ),
             })),
           };

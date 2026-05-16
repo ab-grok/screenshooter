@@ -1,7 +1,7 @@
 // components/Navbar.tsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -99,6 +99,9 @@ export function Navbar({
     return localUnviewed?.filter((s) => s < curr).length || 0;
   }, [localUnviewed]);
 
+  useEffect(() => {
+    console.log("in Navbar, useEffect ran");
+  }, []);
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}

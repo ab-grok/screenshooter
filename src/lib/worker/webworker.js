@@ -179,9 +179,14 @@ async function takeShots({ readySites, id, cron, Auth, env }) {
 async function Fetch({ Auth, cron, env, body, endpoint, method }) {
   //body:{};
 
-  console.log("in Fetch", { Auth, cron, body, endpoint, method });
+  console.log("in Fetch", { Auth, cron, body, env, endpoint, method });
   !Auth && (Auth = await createJWT({ cron, env }));
+  const auth = await createJWT(cron, env);
 
+  console.log("In Fetch, Cron, env: ", { cron, env });
+  console.log("In Fetch, auth from createJWT", { auth });
+
+  console.log("In Fetch, passed Auth after reassignmment", { Auth });
   const headers = {
     Authorization: Auth,
     "Content-Type": "application/json",

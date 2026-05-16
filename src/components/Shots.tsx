@@ -113,6 +113,7 @@ export default function Shots({
 
   //updates localUnviewed used in Navbar
   useEffect(() => {
+    console.log("In Shots: useEffect ran");
     const localUnviewed = siteShots?.filter((s) => !s.viewed).map((s) => s.id);
     onlocalUnviewed(localUnviewed!);
   }, [siteShots]);
@@ -153,7 +154,7 @@ export default function Shots({
       }
     };
 
-    if (refresh.includes(site)) refreshShots(); //random string trigger from parent
+    if (refresh?.includes(site)) refreshShots(); //random string trigger from parent
 
     window.addEventListener("keydown", ctrlR);
     return () => window.removeEventListener("keydown", ctrlR);

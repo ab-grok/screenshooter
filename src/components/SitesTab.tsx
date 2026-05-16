@@ -1,7 +1,7 @@
 // components/SitesTab.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Globe, Plus, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,9 @@ export function SitesTab({
 }: SitesTabProps) {
   const [isOpen, setIsOpen] = useState(false);
 
+  useEffect(() => {
+    console.log("In SitesTab, useEffect() ran!");
+  }, []);
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuTrigger asChild>

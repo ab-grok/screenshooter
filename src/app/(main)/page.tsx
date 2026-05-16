@@ -16,9 +16,6 @@ import Shots from "@/components/Shots";
 import { usePreserveScroll } from "@/lib/usePreserveScroll";
 
 export default function HomePage() {
-  const { userData, userDataError, userDataLoading } = useUserData(); //when !userData these dont work: delete*, viewSelectedShots, handleAddSite
-  // const [userData, setUserData] = useState<userData>(); //will serve as logged indicator and display user info: create type
-
   const [selectedSite, setSelectedSite] = useState<siteData>(); //unlogged users have no sites, if selectedSite = undefined set to visitor site/cnn.com; account for site active state
   const [refreshingSites, setRefreshingSites] = useState<string>(); //when manual loading getShots
 
@@ -43,6 +40,8 @@ export default function HomePage() {
     {} as timePeriod,
   );
 
+  const { userData, userDataError, userDataLoading } = useUserData(); //when !userData these dont work: delete*, viewSelectedShots, handleAddSite
+  // const [userData, setUserData] = useState<userData>(); //will serve as logged indicator and display user info: create type
   const preserveScroll = usePreserveScroll(); // passed down to shots>gallery
   const { sitesLoading, sitesError, sitesRefetch, sites } = useQuerySites(); //sitesRefetch => {data, error, isError, isSuccess}
 
@@ -73,8 +72,9 @@ export default function HomePage() {
               {
                 ...siteUnvieweds,
                 unvieweds:
-                  siteUnvieweds?.unvieweds.filter((s) => !delIds.includes(s)) ||
-                  [],
+                  siteUnvieweds?.unvieweds.filter(
+                    (s) => !delIds?.includes(s),
+                  ) || [],
               },
             ]
           : allSitesUnvieweds!;
@@ -115,6 +115,7 @@ export default function HomePage() {
   // );
 
   useEffect(() => {
+    console.log("in HomePage, useEffect ran;");
     if (!sites?.length) return;
     handleSelectSite(sites[0]);
     //can load userSettings.lastSite

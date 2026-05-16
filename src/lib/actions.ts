@@ -132,7 +132,7 @@ export async function getUserData() {
   // notifications: InfiniteQuery; notepad, will have own functions.
   const { user, joined, isAdmin } = await validateSession();
 
-  if (!user) throw { error: "Unknown user" };
+  if (!user) throw { error: "In getUserData, Unknown user" };
 
   const { maxCrons, activeSites, userSites, error } = await getActiveSites();
   if (error) throw { error };

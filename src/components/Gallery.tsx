@@ -149,7 +149,7 @@ export function Gallery({
     try {
       const selIds = selectedShots.map((s) => s.id!);
       const selShotKeys = siteShots
-        ?.filter((s) => selIds.includes(s.id))
+        ?.filter((s) => selIds?.includes(s.id))
         .map((s) => ({ key: s.shotKey, date: s.date }))!;
 
       const selShots = await Promise.all(
