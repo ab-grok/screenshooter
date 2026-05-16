@@ -3,12 +3,11 @@
 import { NextResponse } from "next/server";
 import * as jose from "jose";
 import { getCronSites, setNotification } from "@/lib/server";
-import { json } from "stream/consumers";
 
 export async function GET(req: Request) {
   try {
     const token = req.headers.get("Authorization")!;
-    const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+    const secret = new TextEncoder().encode(process?.env?.JWT_SECRET);
 
     const { payload } = await jose.jwtVerify(token, secret);
     const { cron } = payload;

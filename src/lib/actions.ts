@@ -418,7 +418,7 @@ export async function createCookie() {
 
 export async function createJWT() {
   //gets Uint8Array binary of secret
-  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+  const secret = new TextEncoder().encode(process?.env?.JWT_SECRET);
 
   return await new jose.SignJWT({ safe: "true" })
     .setProtectedHeader({ alg: "HS256" })

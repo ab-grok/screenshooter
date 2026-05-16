@@ -10,7 +10,6 @@ import {
   siteData,
   timePeriod,
   unviewedType,
-  userData,
 } from "@/lib/types";
 import { useQuerySites, useUserData } from "./reactquery";
 import Shots from "@/components/Shots";
@@ -282,7 +281,7 @@ export default function HomePage() {
       />
 
       {/* Footer gradient accent */}
-      <div className="from-primary/50 via-accent/50 to-primary/50 h-1 bg-gradient-to-r" />
+      <div className="from-primary/50 via-accent/50 to-primary/50 h-1 bg-linear-to-r" />
     </div>
   );
 }

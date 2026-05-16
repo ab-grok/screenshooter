@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 export async function POST(req: Request) {
   try {
     const token = req.headers.get("Authorization")!;
-    const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+    const secret = new TextEncoder().encode(process?.env?.JWT_SECRET);
 
     const { payload } = await jose.jwtVerify(token, secret);
 

@@ -11,26 +11,21 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import {
-  ChangeEvent,
-  InputEventHandler,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { ErrDialog } from "@/components/ErrorDialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { logUser } from "@/lib/actions";
 import { logSchema, logType } from "@/lib/zodtypes";
+import { Spinner } from "@/components/ui/spinner";
 
-export default function Login() {
+export default function Login({ isMobile }: { isMobile?: boolean }) {
   type logInput = "u" | "p" | "";
   const formItems = ["username", "password"];
   const [dialog, setDialog] = useState({ msg: "", danger: false });
   const textChangeTimer = useRef<NodeJS.Timeout | null>(null);
-  const [buttonAnim, setButtonAnim] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [formType, setFormType] = useState<"login" | "signup">("login");
   const passRef = useRef<HTMLInputElement | null>(null); // can use oneRef, better optimization.
   const nameRef = useRef<HTMLInputElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -101,15 +96,8 @@ export default function Login() {
     }
   }
 
-  function buttonPressed() {
-    setButtonAnim(true);
-    setTimeout(() => {
-      setButtonAnim(false);
-    }, 100);
-  }
-
   return (
-    <div className="h-full w-full overflow-auto bg-black p-2 px-5">
+    <div className="border-border/80 h-full w-full overflow-auto border-2 bg-black p-2 px-5">
       <ErrDialog msg={dialog.msg} danger={dialog.danger} />
       <Form {...logForm}>
         <form
@@ -117,9 +105,9 @@ export default function Login() {
           className="flex flex-col space-y-4 overflow-hidden p-2 text-white/80"
         >
           <section className="h-12 w-full text-center text-4xl font-semibold select-none">
-            Log in
-            <Separator className="bg-neutral-500" />
+            {formType == "login" ? "Log In" : "Sign Up"}
           </section>
+          <Separator className="bg-border/50" />
           <section className="flex flex-col space-y-3">
             {formItems.map((a, i) => (
               <FormField
@@ -142,8 +130,8 @@ export default function Login() {
                         />
                         <span
                           className={cn(
-                            `absolute top-[25%] hidden h-1/2 items-center truncate rounded-full bg-white/20 p-1 font-bold text-stone-500`,
-                            a == "password" && currInput?.name == "p"
+                            `absolute top-[25%] h-1/2 items-center truncate rounded-full bg-white/20 p-1 font-bold text-stone-500`,
+                            a == "password" && currInput?.count
                               ? "flex"
                               : "hidden",
                           )}
@@ -160,22 +148,20 @@ export default function Login() {
             ))}
           </section>
           <Button
-            onClick={() => buttonPressed()}
             type="submit"
             disabled={loading}
             className={cn(
-              "min-h-16 cursor-pointer overflow-hidden rounded-full shadow-md transition-all select-none hover:-translate-y-0.5 hover:bg-green-600/60",
-              buttonAnim && "scale-[99.5%] shadow-none hover:translate-y-0.5",
+              "min-h-16 cursor-pointer overflow-hidden rounded-full shadow-md transition-all select-none hover:-translate-y-0.5 hover:bg-green-600/60 active:scale-95 active:shadow-none",
             )}
           >
-            <span
-              className={cn(
-                loading &&
-                  "scale-x-[300] scale-y-200 transition-all duration-[20s]",
-              )}
-            >
-              {!loading ? "Sign in" : "..."}
-            </span>
+            {loading ? (
+              //add framer motion
+              <Spinner className="h-8 w-8" />
+            ) : formType == "login" ? (
+              <p className="text-2xl font-semibold">Login</p>
+            ) : (
+              <p className="text-2xl font-semibold">Signup</p>
+            )}
           </Button>
         </form>
       </Form>
