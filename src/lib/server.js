@@ -11,18 +11,18 @@ import { unviewedType, shotData, downloadProps } from "./types";
 import { createCookie, createJWT, getToken } from "./actions";
 import { formatDate } from "./dateformatter";
 
-async function DB(conn) {
-  if (!db && conn) {
-    return postgres(conn, {
-      debug: (connection, query, params) => {
-        console.log("Query: ", query);
-        console.log("Params: ", params);
-      },
-    });
-  }
-}
+// async function DB(conn) {
+//   if (!db && conn) {
+//   }
+// }
 
-const db = await DB(process.env.DB_CONN);
+const db = postgres(process?.env?.DB_CONN, {
+  debug: (connection, query, params) => {
+    console.log("Query: ", query);
+    console.log("Params: ", params);
+  },
+});
+
 // let db: Sql<{}> = DB(process.env.DB_CONN);
 
 //------> shooterWorker actions
